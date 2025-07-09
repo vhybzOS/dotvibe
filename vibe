@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Vibe v2 CLI wrapper that preserves working directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec deno run --allow-all "$SCRIPT_DIR/src/cli.ts" "$@"

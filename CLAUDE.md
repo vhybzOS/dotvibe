@@ -208,55 +208,252 @@ export const processQuery = (
 ): Effect.Effect<QueryResult, VibeError> => pipe(...)
 ```
 
-### Effect-TS Async Patterns
+### Effect-TS + Zod v4 Integration Patterns
+
+#### Core Import Pattern
+```typescript
+import { Effect, pipe, Either } from 'effect'
+import { z } from 'zod/v4'
+```
+
+#### Schema-First Development
+```typescript
+// 1. Define Zod schemas first
+export const QueryOptionsSchema = z.object({
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(50).default(10),
+  similarity: z.number().min(0).max(1).default(0.1),
+  verbose: z.boolean().default(false)
+})
+
+// 2. Infer types from schemas
+export type QueryOptions = z.infer<typeof QueryOptionsSchema>
+
+// 3. Use schemas for validation in Effect chains
+export const parseQueryOptions = (
+  input: unknown
+): Effect.Effect<QueryOptions, ValidationError> =>
+  Effect.try({
+    try: () => QueryOptionsSchema.parse(input),
+    catch: (error) => createValidationError(error, 'Invalid query options')
+  })
+```
+
+#### Tagged Union Error System with Zod
+```typescript
+// Define error schemas with Zod discriminated unions
+export const ConfigurationErrorSchema = z.object({
+  _tag: z.literal('ConfigurationError'),
+  message: z.string(),
+  details: z.string().optional()
+})
+
+export const EmbeddingErrorSchema = z.object({
+  _tag: z.literal('EmbeddingError'),
+  message: z.string(),
+  text: z.string().optional()
+})
+
+export const VibeErrorSchema = z.discriminatedUnion('_tag', [
+  ConfigurationErrorSchema,
+  EmbeddingErrorSchema
+])
+
+// Infer types from schemas
+export type ConfigurationError = z.infer<typeof ConfigurationErrorSchema>
+export type EmbeddingError = z.infer<typeof EmbeddingErrorSchema>
+export type VibeError = z.infer<typeof VibeErrorSchema>
+
+// Create error constructors that work with exactOptionalPropertyTypes: true
+export const createConfigurationError = (
+  error: unknown,
+  details?: string
+): ConfigurationError => {
+  const baseError = {
+    _tag: 'ConfigurationError' as const,
+    message: error instanceof Error ? error.message : String(error)
+  }
+  return details ? { ...baseError, details } : baseError
+}
+```
+
+#### Critical TypeScript Compatibility
+```typescript
+// ❌ Wrong - fights exactOptionalPropertyTypes: true
+export interface BadError {
+  readonly _tag: 'BadError'
+  readonly details?: string | undefined  // Type hack that breaks strict mode
+}
+
+// ✅ Correct - works with exactOptionalPropertyTypes: true
+export const GoodErrorSchema = z.object({
+  _tag: z.literal('GoodError'),
+  details: z.string().optional()  // Zod handles optional properly
+})
+
+// ✅ Correct error constructor pattern
+export const createGoodError = (message: string, details?: string): GoodError => {
+  const baseError = { _tag: 'GoodError' as const, message }
+  return details ? { ...baseError, details } : baseError
+}
+```
+
+#### Effect-TS Async Patterns
 ```typescript
 // ❌ Wrong - causes "Not a valid effect" error
 const result = await someAsyncOperation()
 
 // ✅ Correct - all async operations use Effect.tryPromise
-const result = Effect.tryPromise({
-  try: () => someAsyncOperation(),
-  catch: (error) => createVibeError(error, 'Operation failed')
-})
+export const safeAsyncOperation = (
+  input: string
+): Effect.Effect<ResultType, VibeError> =>
+  Effect.tryPromise({
+    try: () => someAsyncOperation(input),
+    catch: (error) => createVibeError(error, 'Operation failed')
+  })
+
+// ✅ Correct - validation + async in Effect chain
+export const validateAndProcess = (
+  input: unknown
+): Effect.Effect<ProcessedResult, VibeError> =>
+  pipe(
+    Effect.try({
+      try: () => InputSchema.parse(input),
+      catch: (error) => createValidationError(error, 'Invalid input')
+    }),
+    Effect.flatMap(validInput => processInput(validInput))
+  )
 ```
 
-### Zod v4 Schema Validation
+#### Effect-TS v3 Either API (Critical)
 ```typescript
-import { z } from 'zod/v4'
+// ❌ Wrong - old Effect API that doesn't exist
+if (Effect.isLeft(result)) {
+  const error = result.left
+}
 
-export const QueryOptionsSchema = z.object({
+// ✅ Correct - Effect v3 Either API
+import { Either } from 'effect'
+
+const result = await Effect.runPromise(Effect.either(someEffect))
+if (Either.isLeft(result)) {
+  const error = Either.getLeft(result)
+  // Handle error
+} else {
+  const value = Either.getRight(result)
+  // Handle success
+}
+```
+
+#### File I/O with Validation
+```typescript
+// Schema for file content
+export const ConfigFileSchema = z.object({
+  version: z.string(),
+  settings: z.object({
+    apiKey: z.string().min(1),
+    model: z.string().default('text-embedding-004')
+  })
+})
+
+// Read and validate JSON file
+export const readConfigFile = (
+  filePath: string
+): Effect.Effect<ConfigFile, VibeError> =>
+  pipe(
+    Effect.tryPromise({
+      try: () => Deno.readTextFile(filePath),
+      catch: (error) => createStorageError(error, filePath)
+    }),
+    Effect.flatMap(content =>
+      Effect.try({
+        try: () => {
+          const json = JSON.parse(content)
+          return ConfigFileSchema.parse(json)
+        },
+        catch: (error) => createValidationError(error, `Invalid config file: ${filePath}`)
+      })
+    )
+  )
+```
+
+#### CLI Argument Parsing Pattern
+```typescript
+// Schema for CLI arguments
+export const CliArgsSchema = z.object({
+  command: z.enum(['embed', 'query', 'help']),
+  query: z.string().optional(),
   limit: z.number().int().min(1).max(50).default(10),
-  pattern: z.string().min(1),
-  complexity: z.enum(['low', 'medium', 'high']).default('medium')
+  verbose: z.boolean().default(false)
 })
 
-export type QueryOptions = z.infer<typeof QueryOptionsSchema>
+// Parse and validate CLI arguments
+export const parseCliArgs = (
+  args: string[]
+): Effect.Effect<CliArgs, ValidationError> => {
+  const rawArgs = {
+    command: args[0],
+    query: args[1],
+    limit: args.includes('--limit') ? parseInt(args[args.indexOf('--limit') + 1]!) : undefined,
+    verbose: args.includes('--verbose')
+  }
+
+  return Effect.try({
+    try: () => CliArgsSchema.parse(rawArgs),
+    catch: (error) => createValidationError(error, 'Invalid CLI arguments')
+  })
+}
 ```
 
-### Tagged Union Error System
+#### Testing with Effect + Zod
 ```typescript
-export interface QueryError {
-  readonly _tag: 'QueryError'
-  readonly message: string
-  readonly query?: string
-}
+// Test Effect Either API correctly
+import { Effect, Either } from 'effect'
 
-export interface PatternError {
-  readonly _tag: 'PatternError'
-  readonly message: string
-  readonly pattern?: string
-}
-
-export type VibeError = QueryError | PatternError
-
-export const createQueryError = (
-  error: unknown,
-  query?: string
-): QueryError => ({
-  _tag: 'QueryError',
-  message: error instanceof Error ? error.message : String(error),
-  query
+it('should handle validation errors', async () => {
+  const result = await Effect.runPromise(
+    Effect.either(validateInput('invalid'))
+  )
+  
+  assert(Either.isLeft(result))
+  const error = Either.getLeft(result)
+  assertEquals(error._tag, 'ValidationError')
 })
+
+// Test with proper array access for strict mode
+it('should handle array results safely', async () => {
+  const result = await Effect.runPromise(getResults())
+  
+  assertEquals(result.items.length, 2)
+  if (result.items.length > 0) {
+    const firstItem = result.items[0]!  // Safe with bounds check
+    assertExists(firstItem)
+  }
+})
+```
+
+#### Key Learnings Summary
+
+1. **Schema First**: Always define Zod schemas before TypeScript interfaces
+2. **Effect Wrapping**: Wrap ALL async operations in `Effect.tryPromise`
+3. **Either API**: Use `Either.isLeft()` and `Either.getLeft()` for Effect v3
+4. **Optional Properties**: Use Zod `.optional()` instead of `| undefined` hacks
+5. **Error Constructors**: Conditionally add optional properties to satisfy strict mode
+6. **Validation Chains**: Combine validation and async operations in Effect pipes
+7. **Array Access**: Use bounds checking or non-null assertions for `noUncheckedIndexedAccess`
+
+#### Working with Strict TypeScript
+```typescript
+// ✅ These compiler options work with our patterns
+{
+  "compilerOptions": {
+    "strict": true,
+    "exactOptionalPropertyTypes": true,    // Zod handles this
+    "noUncheckedIndexedAccess": true,     // Use bounds checking
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}
 ```
 
 ### @tested_by System

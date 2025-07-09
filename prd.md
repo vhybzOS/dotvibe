@@ -1,5 +1,48 @@
 # Product Requirements Document
 
+## Feature: Toy Vibe Query with Google Gemini Embeddings
+**Status**: completed
+**Priority**: high
+**Created**: 2024-07-09
+
+### Description
+Implement a prototype version of the vibe query system using Google Gemini embeddings to enable semantic code search. This toy version demonstrates the core concept of natural language code querying and serves as the foundation for the full implementation.
+
+### Acceptance Criteria
+- [x] Integrate Google Gemini API for generating embeddings
+- [x] Read API key from .env file with proper error handling
+- [x] Generate embeddings for sample code.ts file
+- [x] Store embeddings in embed.json with metadata
+- [x] Implement vibe query command for natural language search
+- [x] Calculate semantic similarity using cosine similarity
+- [x] Extract relevant code snippets from search results
+- [x] Provide relevance scoring for returned results
+- [x] Follow Effect-TS patterns for all async operations
+- [x] Use Zod v4 schemas for input validation
+- [x] Implement tagged union error system
+
+### Implementation Notes
+- Uses @google/genai SDK for embedding generation
+- Stores embeddings in JSON format for simplicity
+- Implements cosine similarity for semantic matching
+- Extracts code snippets intelligently (functions, interfaces, etc.)
+- Includes relevance scoring based on similarity + keyword matching
+- CLI supports both embed and query commands
+
+### User Stories
+- As a developer, I want to generate embeddings for my code with `vibe embed`
+- As a developer, I want to search for "async functions" and get relevant code snippets
+- As a developer, I want to see relevance scores to understand result quality
+- As a developer, I want meaningful error messages when API calls fail
+
+### Workflow
+1. Set up .env file with GOOGLE_API_KEY
+2. Run `deno task dev embed` to generate embeddings for code.ts
+3. Run `deno task dev query "async functions"` to search semantically
+4. Get formatted results with relevance scores
+
+---
+
 ## Feature: Core Query System
 **Status**: planned
 **Priority**: high
