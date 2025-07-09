@@ -531,7 +531,24 @@ dotvibe/
 
 ## ⚡ Key Commands
 
-### Development
+### **🚀 Production CLI Usage (ALWAYS USE THIS FOR TESTING & EXAMPLES)**
+```bash
+# **CRITICAL: Always use ./vibe executable for testing and user examples**
+./vibe init                           # Initialize workspace (auto-starts SurrealDB server)
+./vibe index src/                     # Index source code
+./vibe query "async functions"        # Search code
+./vibe help                          # Show help
+
+# Example workflow
+mkdir test-project && cd test-project
+../vibe init                         # Auto-starts SurrealDB server on port 4243+
+mkdir src
+echo 'export async function test() {}' > src/app.ts
+../vibe index src/                   # Index files with embeddings
+../vibe query "async"                # Search code with semantic similarity
+```
+
+### **🔧 Development Commands**
 ```bash
 # Type checking
 deno task check
@@ -546,14 +563,23 @@ deno task lint
 deno task fmt
 ```
 
-### Build
+### **📦 Build Commands**
 ```bash
-# Build executable
+# Build executable (if needed)
 deno task build
 
-# Run locally
+# Development mode (NOT for users)
 deno task dev
 ```
+
+### **⚠️ CRITICAL EXECUTABLE USAGE NOTES:**
+- **✅ Production/Testing**: `./vibe init` (ALWAYS USE THIS)
+- **❌ Development Only**: `deno run --allow-all src/cli.ts init` (INTERNAL ONLY)
+- **📁 File**: `/home/keyvan/.vibe/dotvibe/vibe` - **Simple bash script shortcut** (NO BUILD REQUIRED)
+- **🔧 Script Content**: Just `#!/usr/bin/env bash` + `exec deno run --allow-all "$SCRIPT_DIR/src/cli.ts" "$@"`
+- **💡 No Compilation**: It's a wrapper script, not a compiled executable - always up-to-date
+- **🔄 Auto-Server**: `./vibe init` automatically starts SurrealDB server on available port (4243+)
+- **🛡️ Process Management**: Server shuts down cleanly when CLI exits (Ctrl+C)
 
 ---
 

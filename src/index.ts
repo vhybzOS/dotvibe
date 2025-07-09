@@ -71,11 +71,15 @@ export const createEmbeddingError = (
 
 export const createStorageError = (
   error: unknown,
-  path?: string
+  path?: string,
+  details?: string
 ): StorageError => {
+  const baseMessage = error instanceof Error ? error.message : String(error)
+  const message = details ? `${details}: ${baseMessage}` : baseMessage
+  
   const baseError = {
     _tag: 'StorageError' as const,
-    message: error instanceof Error ? error.message : String(error)
+    message
   }
   return path ? { ...baseError, path } : baseError
 }

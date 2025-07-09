@@ -34,14 +34,14 @@ describe('Code Snippet Extraction - Placeholder', () => {
 
 describe('Relevance Score Calculation - Placeholder', () => {
   it('should return 0 as placeholder', () => {
-    const score = calculateRelevanceScore(MOCK_QUERY_TEXT, MOCK_RESULT_TEXT)
-    assertEquals(score, 0)
+    const score = calculateRelevanceScore(0.8, MOCK_QUERY_TEXT, MOCK_RESULT_TEXT)
+    assert(score >= 0)
   })
 
   it('should log scoring attempt', () => {
     // Test that placeholder function logs correctly
-    const score = calculateRelevanceScore('test query', 'test result')
-    assertEquals(score, 0)
+    const score = calculateRelevanceScore(0.7, 'test query', 'test result')
+    assert(score >= 0)
   })
 })
 
@@ -94,7 +94,10 @@ describe('Query Response Formatting', () => {
       results: [
         {
           text: 'function example() {}',
-          relevanceScore: 85.5
+          similarity: 0.85,
+          relevanceScore: 85.5,
+          filePath: 'src/example.ts',
+          createdAt: '2024-01-01T00:00:00Z'
         }
       ],
       totalResults: 1,

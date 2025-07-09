@@ -4,11 +4,95 @@
  * @tested_by tests/cli.test.ts (Command parsing, help display, input validation)
  */
 
-import { Effect, pipe } from 'effect'
+// Auto-load .env file from current directory (if exists)
+import '@std/dotenv/load'
+
+import { Effect, pipe, Either } from 'effect'
 import { Command } from 'commander'
 import { type VibeError } from './index.ts'
 import { executeQuery, formatQueryResults, QueryOptionsSchema } from './query.ts'
+import { initCommand } from './commands/init.ts'
+import { startCommand } from './commands/start.ts'
+import { indexCommand, IndexOptionsSchema } from './commands/index.ts'
+import { setupProcessCleanup } from './process-manager.ts'
+import { stopSurrealServer, isServerRunning, getServerInfo } from './surreal-server.ts'
+import { getWorkspaceStatus } from './workspace.ts'
 
+
+/**
+ * Handle init command - initialize vibe workspace
+ */
+const handleInitCommand = async () => {
+  const program = pipe(
+    initCommand(),
+    Effect.catchAll(error => 
+      Effect.sync(() => {
+        console.error('❌ Initialization failed:')
+        console.error(formatError(error))
+        Deno.exit(1)
+      })
+    )
+  )
+  
+  await Effect.runPromise(program)
+}
+
+/**
+ * Handle start command - start SurrealDB server
+ */
+const handleStartCommand = async () => {
+  const program = pipe(
+    startCommand(),
+    Effect.catchAll(error => 
+      Effect.sync(() => {
+        console.error('❌ Server start failed:')
+        console.error(formatError(error))
+        Deno.exit(1)
+      })
+    )
+  )
+  
+  await Effect.runPromise(program)
+}
+
+/**
+ * Handle index command - scan and index files
+ */
+const handleIndexCommand = async (
+  targetPath: string,
+  options: {
+    ext?: string[]
+    includeMarkdown?: boolean
+    maxDepth?: number
+    verbose?: boolean
+  }
+) => {
+  if (!targetPath || targetPath.trim().length === 0) {
+    console.error('❌ Target path cannot be empty')
+    console.error('💡 Example: vibe index src/')
+    Deno.exit(1)
+  }
+  
+  const indexOptions = IndexOptionsSchema.parse({
+    ext: options.ext,
+    includeMarkdown: options.includeMarkdown,
+    maxDepth: options.maxDepth,
+    verbose: options.verbose
+  })
+  
+  const program = pipe(
+    indexCommand(targetPath, indexOptions),
+    Effect.catchAll(error => 
+      Effect.sync(() => {
+        console.error('❌ Indexing failed:')
+        console.error(formatError(error))
+        Deno.exit(1)
+      })
+    )
+  )
+  
+  await Effect.runPromise(program)
+}
 
 /**
  * Handle query command - search code using natural language
@@ -63,6 +147,129 @@ const handleQueryCommand = async (
 }
 
 /**
+ * Handle stop command - stop SurrealDB server
+ */
+const handleStopCommand = async () => {
+  const program = pipe(
+    isServerRunning(),
+    Effect.flatMap(running => {
+      if (!running) {
+        return Effect.sync(() => {
+          console.log('ℹ️  No SurrealDB server is currently running.')
+        })
+      }
+      
+      return pipe(
+        stopSurrealServer(),
+        Effect.tap(() => Effect.sync(() => {
+          console.log('🎉 SurrealDB server stopped successfully.')
+        }))
+      )
+    }),
+    Effect.catchAll(error => 
+      Effect.sync(() => {
+        console.error('❌ Failed to stop server:')
+        console.error(formatError(error))
+        Deno.exit(1)
+      })
+    )
+  )
+  
+  await Effect.runPromise(program)
+}
+
+/**
+ * Handle status command - show workspace status
+ */
+const handleStatusCommand = async () => {
+  const program = pipe(
+    Effect.gen(function* () {
+      console.log('🔍 Checking workspace status...\n')
+      
+      // Get comprehensive workspace status
+      const workspaceStatus = yield* getWorkspaceStatus()
+      
+      if (!workspaceStatus.exists) {
+        console.log('❌ No vibe workspace found in current directory')
+        console.log('💡 Run `vibe init` to initialize a workspace')
+        return
+      }
+      
+      console.log('✅ Vibe workspace: `.vibe/`')
+      
+      if (workspaceStatus.createdAt) {
+        console.log(`   📅 Created: ${new Date(workspaceStatus.createdAt).toLocaleString()}`)
+      }
+      if (workspaceStatus.databasePath) {
+        console.log(`   🗄️  Database: ${workspaceStatus.databasePath}`)
+      }
+      if (!workspaceStatus.initialized) {
+        console.log('   ⚠️  Warning: Workspace not fully initialized (missing config.json)')
+      }
+      
+      // Check SurrealDB server status
+      const serverRunning = yield* isServerRunning()
+      const serverInfo = yield* getServerInfo()
+      
+      console.log('\n📊 Services Status:')
+      
+      if (serverRunning && serverInfo) {
+        console.log(`✅ SurrealDB Server: Running`)
+        console.log(`   🌐 Address: ${serverInfo.host}:${serverInfo.port}`)
+        console.log(`   🆔 PID: ${serverInfo?.pid || 'Unknown'}`)
+        console.log(`   📁 Database: ${serverInfo.dbPath}`)
+        
+        // Check database connection
+        const dbHealthy = yield* Effect.tryPromise({
+          try: async () => {
+            const response = await fetch(`http://${serverInfo.host}:${serverInfo.port}/version`)
+            return response.ok
+          },
+          catch: () => false
+        })
+        
+        if (dbHealthy) {
+          console.log(`   💚 Health: Healthy`)
+        } else {
+          console.log(`   💛 Health: Responding but may have issues`)
+        }
+      } else {
+        console.log(`❌ SurrealDB Server: Not running`)
+        console.log(`   💡 Run \`vibe start\` to start the server`)
+      }
+      
+      console.log('\n📚 Data Status:')
+      if (workspaceStatus.ready) {
+        console.log(`✅ Database: Initialized`)
+        console.log(`   📂 Location: ${workspaceStatus.databasePath}`)
+      } else {
+        console.log(`❌ Database: Not initialized`)
+        console.log(`   💡 Run \`vibe start\` to initialize the database`)
+      }
+      
+      // Show workspace isolation info
+      console.log('\n🏠 Workspace Isolation:')
+      console.log(`   📍 Current Path: ${Deno.cwd()}`)
+      console.log(`   🔒 Isolated: Yes (path-specific server)`)
+      
+      console.log('\n💡 Available Commands:')
+      console.log(`   vibe index src/     # Index your code`)
+      console.log(`   vibe query "text"   # Search your code`)
+      console.log(`   vibe stop           # Stop services`)
+    }),
+    Effect.catchAll(error => 
+      Effect.sync(() => {
+        console.error('❌ Status check failed:')
+        console.error(formatError(error))
+        Deno.exit(1)
+      })
+    )
+  )
+  
+  await Effect.runPromise(program)
+}
+
+/**
  * Format error messages for user display
  */
 const formatError = (error: VibeError): string => {
@@ -89,8 +296,31 @@ const setupCLI = () => {
   
   program
     .name('vibe')
-    .description('dotvibe - Toolbox for Coding Agents')
-    .version('0.1.0')
+    .description('dotvibe - Intelligent Code Indexing and Search')
+    .version('1.0.0')
+  
+  // Init command
+  program
+    .command('init')
+    .description('Initialize vibe workspace in current directory')
+    .action(handleInitCommand)
+  
+  // Start command
+  program
+    .command('start')
+    .description('Start SurrealDB server for current workspace')
+    .action(handleStartCommand)
+  
+  // Index command
+  program
+    .command('index')
+    .description('Index code files for search')
+    .argument('<path>', 'Path to index (file or directory)')
+    .option('--ext <extensions...>', 'Specific file extensions to index (e.g., .ts .js)')
+    .option('--include-markdown', 'Include markdown files in indexing', false)
+    .option('--max-depth <number>', 'Maximum directory depth to scan', (value) => parseInt(value), 10)
+    .option('-v, --verbose', 'Verbose output with detailed progress', false)
+    .action(handleIndexCommand)
   
   // Query command
   program
@@ -102,20 +332,55 @@ const setupCLI = () => {
     .option('-v, --verbose', 'Verbose output with performance metrics', false)
     .action(handleQueryCommand)
   
+  // Stop command
+  program
+    .command('stop')
+    .description('Stop the SurrealDB server')
+    .action(handleStopCommand)
+  
+  // Status command
+  program
+    .command('status')
+    .description('Show workspace and services status')
+    .action(handleStatusCommand)
+  
   // Help command
   program
     .command('help')
     .description('Show help information')
     .action(() => {
-      console.log('🚀 dotvibe - Toolbox for Coding Agents\n')
-      console.log('📖 Available Commands:')
-      console.log('  vibe query <query>    Search code using natural language')
-      console.log('  vibe help            Show this help message\n')
-      console.log('🔧 Query Options:')
-      console.log('  -l, --limit <number>      Maximum number of results (default: 5)')
-      console.log('  -s, --similarity <number> Minimum similarity threshold 0-1 (default: 0.1)')
+      console.log('🚀 dotvibe - Intelligent Code Indexing and Search\n')
+      console.log('📖 Quick Start:')
+      console.log('  1. vibe init              Initialize workspace + start server')
+      console.log('  2. vibe index src/        Index your source code')
+      console.log('  3. vibe query "async"     Search your code\n')
+      console.log('🎯 Server Control:')
+      console.log('  vibe start                Start server (if stopped)')
+      console.log('  vibe stop                 Stop server')
+      console.log('  vibe status               Check server status\n')
+      console.log('🔧 Commands:')
+      console.log('  vibe init                 Initialize .vibe workspace')
+      console.log('  vibe start                Start SurrealDB server')
+      console.log('  vibe index <path>         Index files for search')
+      console.log('  vibe query <query>        Search indexed code')
+      console.log('  vibe status               Show workspace status')
+      console.log('  vibe stop                 Stop SurrealDB server')
+      console.log('  vibe help                 Show this help message\n')
+      console.log('🔍 Index Options:')
+      console.log('  --ext .ts,.js             Index specific extensions')
+      console.log('  --include-markdown        Include .md files')
+      console.log('  --max-depth 5             Limit directory depth')
+      console.log('  -v, --verbose             Show detailed progress\n')
+      console.log('🔍 Query Options:')
+      console.log('  -l, --limit 10            Maximum results')
+      console.log('  -s, --similarity 0.1      Similarity threshold')
       console.log('  -v, --verbose             Show performance metrics\n')
-      console.log('💡 Example: vibe query "async functions"')
+      console.log('💡 Examples:')
+      console.log('  vibe init                        # New workspace')
+      console.log('  vibe start                       # Start server')
+      console.log('  vibe index src/ --ext .ts,.tsx   # Index specific files')
+      console.log('  vibe query "async functions"     # Search code')
+      console.log('  vibe stop                        # Stop server')
     })
   
   return program
@@ -125,14 +390,14 @@ const setupCLI = () => {
  * Main CLI entry point
  */
 export const main = async () => {
+  // Setup process cleanup for SurrealDB server
+  await Effect.runPromise(setupProcessCleanup())
+  
   const program = setupCLI()
   
   // Handle no arguments - show help
   if (Deno.args.length === 0) {
-    const helpCmd = program.commands.find(cmd => cmd.name() === 'help')
-    if (helpCmd) {
-      helpCmd.action()()
-    }
+    program.help()
     return
   }
   
