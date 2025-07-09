@@ -2,44 +2,13 @@
  * CLI Interface for dotvibe toolbox
  * 
  * @tested_by tests/cli.test.ts (Command parsing, help display, input validation)
- * @tested_by tests/cli-integration.test.ts (End-to-end CLI workflows)
  */
 
 import { Effect, pipe } from 'effect'
 import { Command } from 'commander'
-import { embedCodeFile, type VibeError } from './index.ts'
+import { type VibeError } from './index.ts'
 import { executeQuery, formatQueryResults, QueryOptionsSchema } from './query.ts'
 
-/**
- * Handle embedding command - generate embeddings for code.ts
- */
-const handleEmbedCommand = async (options: { file?: string; output?: string }) => {
-  const codeFile = options.file || './code.ts'
-  const outputFile = options.output || './embed.json'
-  
-  console.log(`🔄 Generating embeddings for ${codeFile}...`)
-  
-  const program = pipe(
-    embedCodeFile(codeFile, outputFile),
-    Effect.tap(storage => 
-      Effect.sync(() => {
-        console.log(`✅ Successfully generated embeddings!`)
-        console.log(`📁 Saved to: ${outputFile}`)
-        console.log(`📊 Embeddings: ${storage.embeddings.length}`)
-        console.log(`🕐 Created: ${new Date(storage.created).toISOString()}`)
-      })
-    ),
-    Effect.catchAll(error => 
-      Effect.sync(() => {
-        console.error('❌ Failed to generate embeddings:')
-        console.error(formatError(error))
-        Deno.exit(1)
-      })
-    )
-  )
-  
-  await Effect.runPromise(program)
-}
 
 /**
  * Handle query command - search code using natural language
@@ -49,7 +18,6 @@ const handleQueryCommand = async (
   options: { 
     limit?: number
     similarity?: number
-    embeddings?: string
     verbose?: boolean
   }
 ) => {
@@ -59,11 +27,8 @@ const handleQueryCommand = async (
     Deno.exit(1)
   }
   
-  const embeddingFile = options.embeddings || './embed.json'
-  
   if (options.verbose) {
     console.log(`🔍 Searching for: "${query}"`)
-    console.log(`📁 Using embeddings: ${embeddingFile}`)
   }
   
   const queryOptions = QueryOptionsSchema.parse({
@@ -72,7 +37,7 @@ const handleQueryCommand = async (
   })
   
   const program = pipe(
-    executeQuery(query, queryOptions, embeddingFile),
+    executeQuery(query, queryOptions),
     Effect.tap(response => 
       Effect.sync(() => {
         const formatted = formatQueryResults(response)
@@ -89,13 +54,6 @@ const handleQueryCommand = async (
       Effect.sync(() => {
         console.error('❌ Query failed:')
         console.error(formatError(error))
-        
-        if (error._tag === 'StorageError' && error.message.includes('No such file')) {
-          console.error('')
-          console.error('💡 Tip: Generate embeddings first with:')
-          console.error('   deno task dev embed')
-        }
-        
         Deno.exit(1)
       })
     )
@@ -134,14 +92,6 @@ const setupCLI = () => {
     .description('dotvibe - Toolbox for Coding Agents')
     .version('0.1.0')
   
-  // Embed command
-  program
-    .command('embed')
-    .description('Generate embeddings for code files')
-    .option('-f, --file <path>', 'Code file to embed', './code.ts')
-    .option('-o, --output <path>', 'Output file for embeddings', './embed.json')
-    .action(handleEmbedCommand)
-  
   // Query command
   program
     .command('query')
@@ -149,7 +99,6 @@ const setupCLI = () => {
     .argument('<query>', 'Natural language query (e.g., "async functions")')
     .option('-l, --limit <number>', 'Maximum number of results', (value) => parseInt(value), 5)
     .option('-s, --similarity <number>', 'Minimum similarity threshold (0-1)', (value) => parseFloat(value), 0.1)
-    .option('-e, --embeddings <path>', 'Path to embeddings file', './embed.json')
     .option('-v, --verbose', 'Verbose output with performance metrics', false)
     .action(handleQueryCommand)
   
@@ -159,12 +108,14 @@ const setupCLI = () => {
     .description('Show help information')
     .action(() => {
       console.log('🚀 dotvibe - Toolbox for Coding Agents\n')
-      console.log('📖 Quick Start:')
-      console.log('  1. Copy .env.example to .env and add your GOOGLE_API_KEY')
-      console.log('  2. Generate embeddings: deno task dev embed')
-      console.log('  3. Search your code: deno task dev query "async functions"\n')
-      console.log('🔧 Commands:')
-      program.outputHelp()
+      console.log('📖 Available Commands:')
+      console.log('  vibe query <query>    Search code using natural language')
+      console.log('  vibe help            Show this help message\n')
+      console.log('🔧 Query Options:')
+      console.log('  -l, --limit <number>      Maximum number of results (default: 5)')
+      console.log('  -s, --similarity <number> Minimum similarity threshold 0-1 (default: 0.1)')
+      console.log('  -v, --verbose             Show performance metrics\n')
+      console.log('💡 Example: vibe query "async functions"')
     })
   
   return program
@@ -178,7 +129,10 @@ export const main = async () => {
   
   // Handle no arguments - show help
   if (Deno.args.length === 0) {
-    program.commands.find(cmd => cmd.name() === 'help')?.action()
+    const helpCmd = program.commands.find(cmd => cmd.name() === 'help')
+    if (helpCmd) {
+      helpCmd.action()()
+    }
     return
   }
   
