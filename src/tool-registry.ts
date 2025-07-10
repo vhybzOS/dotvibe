@@ -1,4 +1,5 @@
 import { z } from 'zod/v4'
+import type { FunctionDeclaration } from '@google/genai'
 import {
   list_filesystem,
   read_file,
@@ -158,4 +159,39 @@ export function getAllTools(): Record<string, {
   }
   
   return tools
+}
+
+/**
+ * Strip $schema property from JSON schema object generically
+ */
+function stripSchemaProperty(jsonSchema: Record<string, any>): Record<string, any> {
+  const { $schema, ...cleanSchema } = jsonSchema
+  return cleanSchema
+}
+
+/**
+ * Convert tool registry to Gemini FunctionDeclaration format
+ * Bridges Zod schemas to Google AI SDK function calling format
+ */
+export function getGeminiToolDeclarations(): FunctionDeclaration[] {
+  const declarations: FunctionDeclaration[] = []
+  
+  for (const [toolName, toolSchema] of Object.entries(toolSchemas)) {
+    // Generate JSON schema from Zod schema
+    const jsonSchema = z.toJSONSchema(toolSchema.parameters)
+    
+    // Strip $schema property if it exists
+    const cleanParameters = stripSchemaProperty(jsonSchema)
+    
+    // Create FunctionDeclaration in Gemini format
+    const declaration: FunctionDeclaration = {
+      name: toolName,
+      description: toolSchema.description,
+      parameters: cleanParameters
+    }
+    
+    declarations.push(declaration)
+  }
+  
+  return declarations
 }
