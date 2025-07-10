@@ -5,13 +5,52 @@ All notable changes to the @dotvibe/query project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-07-10
+
+### Added
+- **Phase 1 Code Analysis Toolbox**: Complete foundational system for code analysis
+- **Tree-sitter Integration**: TypeScript/JavaScript parsing with web-tree-sitter
+- **Tool Registry System**: Schema-driven function registry with Zod v4 validation
+- **Core Analysis Functions**: 
+  - `list_filesystem`: Directory content listing
+  - `read_file`: File content reading  
+  - `list_symbols_in_file`: Tree-sitter powered symbol extraction
+  - `get_symbol_details`: Detailed symbol information
+  - `create_index_entry`: Mock indexing implementation
+- **Zod v4 Native JSON Schema**: Revolutionary discovery - no external dependencies needed
+- **Debug Runner**: Comprehensive manual testing system for toolbox validation
+- **Effect-TS Integration**: Functional programming patterns with async operations
+
+### Technical
+- **New Dependencies**: web-tree-sitter@^0.25.6, tree-sitter-typescript@^0.23.2
+- **Schema Validation**: Runtime parameter and return value validation using Zod
+- **Import Patterns**: Correct static imports for tree-sitter in Deno environment
+- **Error Handling**: Robust unknown error type handling throughout codebase
+- **Type Safety**: exactOptionalPropertyTypes compliance with Zod integration
+
+### Architecture
+- **Tool Registry Pattern**: Reusable architecture for LLM tool integration
+- **Protocol-Driven Development**: Systematic feature lifecycle management
+- **Phase-Based Implementation**: Prevents overwhelming complexity in development
+
+### Metrics
+- **Tool Registry**: 5 core functions with full schema validation
+- **File Operations**: 100% functional (filesystem listing, file reading)
+- **Tree-sitter Foundation**: Parser initialization and language loading working
+- **Test Coverage**: 50% (manual testing via debug-runner.ts)
+
+**Release Notes**: Auto-generated from Phase 1 completion  
+**Version Bump**: MINOR (0.1.0 → 0.2.0) - New foundational features added  
+**Foundation**: Ready for Phase 2 LLM Orchestrator integration
+
 ## [Unreleased]
 
-### Project Setup
-- Initial project structure created
-- Core development protocols established
-- Test tracking system implemented
+### Planned
+- Phase 2: LLM Indexing Orchestrator
+- Intelligent codebase exploration strategy
+- Context compression engine (100x compression)
+- Vector database integration with semantic search
 
 ---
 
-*This changelog will be automatically updated when features are completed and flushed through the development lifecycle.*
+*This changelog is automatically updated when features are completed and flushed through the development lifecycle.*

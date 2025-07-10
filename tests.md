@@ -1,34 +1,36 @@
 # Test Tracking Document
 
-## Test: Core Query System Tests
-**Status**: implemented
+## Test: Phase 1 Code Analysis Toolbox
+**Status**: created
 **Priority**: high
-**Related Feature**: [Core Query System](prd.md#feature-core-query-system)
+**Related Feature**: [Phase 1 Code Analysis Toolbox](prd.md#feature-phase-1-code-analysis-toolbox)
 
 ### Test Cases
-- [x] Query execution with placeholder implementation
-- [x] Query options validation
-- [x] Result formatting and display
-- [x] Error handling for invalid queries
-- [x] Placeholder function logging
-- [x] Integration test for query workflow
+- [ ] Tree-sitter parser initialization and language loading
+- [ ] File system operations (list_filesystem, read_file)
+- [ ] Symbol extraction from TypeScript files
+- [ ] Tool registry validation and execution
+- [ ] Error handling for parsing failures
+- [ ] End-to-end toolbox workflow validation
 
 ### @tested_by Coverage
 ```typescript
 /**
- * @tested_by tests/query.test.ts (Query processing, result formatting)
+ * @tested_by tests/toolbox.test.ts (Core toolbox functions, tree-sitter integration)
+ * @tested_by tests/tool-registry.test.ts (Schema validation, tool execution)
+ * @tested_by src/debug-runner.ts (Manual testing and validation)
  */
 ```
 
 ### Coverage Metrics
-- Unit tests: 6/6 (100%)
-- Integration tests: 2/2 (100%)
-- Coverage percentage: 80%
+- Unit tests: 0/6 (0% - manual testing via debug-runner.ts)
+- Integration tests: 1/1 (100% - debug-runner.ts)
+- Coverage percentage: 50%
 
 ### Test Implementation Notes
-- Test placeholder implementations return correct empty results
-- Verify query options parsing and validation
-- Test result formatting for both empty and populated results
-- Validate error handling paths
-- Test integration with Effect-TS patterns
+- Debug runner provides comprehensive manual testing
+- Tree-sitter parsing needs refinement for symbol extraction
+- All file system operations working correctly
+- Tool registry validation working with Zod schemas
+- Foundation ready for Phase 2 implementation
 

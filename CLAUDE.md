@@ -442,6 +442,128 @@ it('should handle array results safely', async () => {
 6. **Validation Chains**: Combine validation and async operations in Effect pipes
 7. **Array Access**: Use bounds checking or non-null assertions for `noUncheckedIndexedAccess`
 
+#### Phase 1 Code Analysis Toolbox - Critical Learnings
+
+**Zod v4 Native JSON Schema (Revolutionary Discovery)**:
+```typescript
+// ❌ Old way - external dependency
+import { zodToJsonSchema } from 'zod-to-json-schema'
+
+// ✅ New way - Zod v4 native feature
+import { z } from 'zod/v4'
+const jsonSchema = z.toJSONSchema(mySchema)
+```
+
+**Key Benefits**:
+- No external dependencies needed
+- Perfect schema alignment (generated from same source)
+- Automatic description propagation
+- Works seamlessly with discriminated unions
+
+**Tree-sitter Integration Patterns (Hard-Won Knowledge)**:
+
+**Critical Import Pattern**:
+```typescript
+// ❌ Wrong - causes module resolution issues
+import Parser from 'web-tree-sitter'
+import * as Parser from 'web-tree-sitter'
+
+// ✅ Correct - destructure specific exports
+import { Parser } from 'web-tree-sitter'
+import * as TypeScript from 'tree-sitter-typescript'
+```
+
+**Initialization Sequence (Must Follow This Order)**:
+```typescript
+// ❌ Wrong - async import causes issues
+const TreeSitter = await import('web-tree-sitter')
+
+// ✅ Correct - static imports at top level
+import { Parser } from 'web-tree-sitter'
+import * as TypeScript from 'tree-sitter-typescript'
+
+// Initialize in this exact order
+await Parser.init()
+const parser = new Parser()
+parser.setLanguage(TypeScript.typescript)
+```
+
+**Language Loading Gotchas**:
+- `tree-sitter-typescript` exports multiple languages: `typescript`, `tsx`, `javascript`
+- Must use `TypeScript.typescript` not `TypeScript.default`
+- Web-tree-sitter requires WASM initialization before use
+- Parser can return `null` if language not set correctly
+
+**AST Traversal Patterns**:
+```typescript
+// ✅ Robust node traversal
+function findSymbols(node: any, sourceCode: string): SymbolInfo[] {
+  // Always check node.type first
+  if (symbolTypes.includes(node.type)) {
+    // Extract info safely
+  }
+  
+  // Iterate children safely
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i)
+    if (child) {
+      // Recursive search
+    }
+  }
+}
+```
+
+**Error Handling with Unknown Types**:
+```typescript
+// ❌ Wrong - assumes error.message exists
+catch (error) {
+  console.log(error.message)
+}
+
+// ✅ Correct - handle unknown error types
+catch (error) {
+  const errorMessage = error instanceof Error ? error.message : String(error)
+  console.log(errorMessage)
+}
+```
+
+**Tool Registry Pattern (Reusable Architecture)**:
+```typescript
+// Schema + Implementation + Validation in one place
+export const toolSchemas = {
+  toolName: {
+    description: 'Clear description for LLM',
+    parameters: z.object({ ... })
+  }
+}
+
+export const toolImplementations = {
+  toolName: actualFunction
+}
+
+// Runtime validation + execution
+export async function executeTool<T extends ToolName>(
+  name: T,
+  args: unknown
+): Promise<ToolReturnValue<T>> {
+  // Validate args against schema
+  // Execute implementation
+  // Validate return value
+}
+```
+
+**Deno-Specific Patterns**:
+- Use `Deno.readTextFile()` instead of `fs.readFileSync()`
+- Use `Deno.readDir()` for directory listing
+- Import paths must be explicit (`.ts` extension required)
+- `deno.json` imports field maps npm packages correctly
+
+**Development Process Insights**:
+- Always debug imports first (log `Object.keys()` of modules)
+- Tree-sitter parsing failures are usually language loading issues
+- Static imports > dynamic imports for tree-sitter
+- Phase-based development prevents overwhelming complexity
+
 #### Working with Strict TypeScript
 ```typescript
 // ✅ These compiler options work with our patterns
