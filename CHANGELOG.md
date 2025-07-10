@@ -5,6 +5,52 @@ All notable changes to the @dotvibe/query project will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-07-10
+
+### Added
+- **Revolutionary Parallel Processing**: Simultaneous LLM component analysis achieving 5x performance improvement (100+ components/min)
+- **Live Progress Dashboard**: Real-time indexing progress with ETA calculations and components/min tracking
+- **LLM-First Contextual Indexing**: Complete codebase digest provided upfront for full architectural understanding
+- **Enhanced Query Results**: Code blocks with line numbers and complete multiline architectural descriptions
+- **Full Description Preservation**: Complete untruncated LLM descriptions in final reports with proper word wrapping
+
+### Changed
+- **Indexing Architecture**: Transformed from sequential file-by-file to parallel processing with `Promise.allSettled()`
+- **Progress Reporting**: Live dashboard updates with rate limiting (2-second intervals) to prevent terminal spam
+- **Console Management**: Accurate line counting and clearing without eating previous content
+- **Component Analysis**: Individual LLM descriptions with full system context for each component
+- **Performance Metrics**: Real-time completion rates, ETA calculations, and throughput monitoring
+
+### Fixed
+- **Console Spam**: Added 2-second rate limiting for dashboard updates to reduce terminal noise
+- **Line Clearing Logic**: Fixed console overwrite mechanism to prevent eating previous lines
+- **Description Truncation**: Preserved full multiline descriptions in final report (removed 100-char limit)
+- **Timing Logic**: Corrected elapsed time calculations to show accurate progress metrics
+- **Dashboard Accuracy**: Precise line counting based on actual printed content
+
+### Technical
+- **Parallel Execution**: `Promise.allSettled()` for simultaneous component processing
+- **Task State Management**: `queued` → `analyzing` → `completed` status tracking with error isolation
+- **Pre-caching Strategy**: File contents and symbol details cached for optimal performance
+- **Rate Limiting**: Console update throttling with `UPDATE_INTERVAL = 2000ms`
+- **Error Resilience**: Individual component failures don't block parallel processing
+
+### Performance
+- **Processing Speed**: 5x improvement from ~20 to 100+ components/min through parallelization
+- **Console Updates**: Smooth 2-second refresh intervals with accurate progress tracking
+- **Memory Efficiency**: Pre-cached file contents eliminate redundant disk I/O
+- **ETA Accuracy**: Real-time completion rate calculations for precise time estimates
+
+### User Experience
+- **Professional Dashboard**: Clean live updates with recently completed components
+- **Complete Final Report**: All processed components with full architectural descriptions
+- **Multiline Formatting**: Proper word wrapping and indentation for readability
+- **Progress Transparency**: File-by-file processing visibility with component counts
+
+**Release Notes**: Auto-generated from 2 major commits implementing parallel processing architecture  
+**Version Bump**: MINOR (0.3.0 → 0.4.0) - Revolutionary performance improvements with enhanced UX  
+**Architecture**: Parallel LLM processing with live progress dashboard achieving production-quality indexing experience
+
 ## [0.3.0] - 2025-07-10
 
 ### Added

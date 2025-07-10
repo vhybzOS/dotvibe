@@ -1,6 +1,6 @@
 {
   "name": "@dotvibe/query",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "LLM-Native Context Query System with 100x Compression",
   "homepage": "https://dotvibe.dev",
   "repository": "https://github.com/vhybzOS/dotvibe",

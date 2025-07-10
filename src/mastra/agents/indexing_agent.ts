@@ -167,7 +167,12 @@ After this, I will systematically ask you to describe each component with full a
     })
 
     if (verbose) {
-      console.log(`📋 LLM provided architectural analysis (${analysisResult.text?.length || 0} chars)`)
+      console.log('')
+      console.log('💬 LLM ARCHITECTURAL ANALYSIS:')
+      console.log('='.repeat(80))
+      console.log(analysisResult.text || 'No analysis provided')
+      console.log('='.repeat(80))
+      console.log('')
     }
 
     // Extract JSON component list from LLM response
@@ -209,6 +214,10 @@ function extractComponentListFromResponse(response: string): Array<{filename: st
     }
 
     const jsonText = jsonMatch[1]
+    if (!jsonText) {
+      console.warn('⚠️ Empty JSON content in LLM response')
+      return []
+    }
     const componentList = JSON.parse(jsonText)
     
     // Validate the structure
@@ -269,7 +278,84 @@ ${fileContent}`
 }
 
 /**
- * Systematically index components with progress tracking and per-component LLM analysis
+ * Live progress dashboard utilities for parallel processing
+ */
+interface ComponentTask {
+  filename: string
+  componentName: string
+  componentKind: string
+  status: 'queued' | 'analyzing' | 'completed' | 'failed'
+  startTime?: number
+  description?: string
+  error?: string
+}
+
+function clearLines(count: number) {
+  for (let i = 0; i < count; i++) {
+    Deno.stdout.writeSync(new TextEncoder().encode('\x1b[1A\x1b[2K')) // Move up and clear line
+  }
+}
+
+function updateProgressDashboard(tasks: ComponentTask[], startTime: number, totalComponents: number, force = false) {
+  const now = Date.now()
+  const elapsed = (now - startTime) / 1000
+  
+  const completed = tasks.filter(t => t.status === 'completed').length
+  const analyzing = tasks.filter(t => t.status === 'analyzing').length
+  const failed = tasks.filter(t => t.status === 'failed').length
+  const queued = tasks.filter(t => t.status === 'queued').length
+  
+  // Calculate performance metrics
+  const completionRate = elapsed > 0 ? completed / elapsed : 0 // components per second
+  const eta = (queued + analyzing) > 0 && completionRate > 0 ? ((queued + analyzing) / completionRate) : 0
+  const componentsPerMin = completionRate * 60
+  
+  // Show recent completions (last 3)
+  const recentCompletions = tasks
+    .filter(t => t.status === 'completed')
+    .slice(-3)
+    .reverse()
+  
+  const currentlyAnalyzing = tasks.filter(t => t.status === 'analyzing').slice(0, 3)
+  
+  console.log(`🔄 Parallel Processing: ${totalComponents} components`)
+  console.log('')
+  
+  // Recent completions with improved formatting
+  if (recentCompletions.length > 0) {
+    console.log('📁 Recently completed:')
+    recentCompletions.forEach(task => {
+      // Move description to next line with full width (80 chars max)
+      const shortDesc = task.description ? task.description.slice(0, 80) + (task.description.length > 80 ? '...' : '') : 'Description generated'
+      console.log(`✅ ${task.filename}::${task.componentName}`)
+      console.log(`   "${shortDesc}"`)
+    })
+    console.log('')
+  }
+  
+  // Currently analyzing
+  if (currentlyAnalyzing.length > 0) {
+    console.log('🤖 Currently analyzing:')
+    currentlyAnalyzing.forEach(task => {
+      const duration = task.startTime ? ((now - task.startTime) / 1000).toFixed(1) + 's' : 'starting...'
+      console.log(`🤖 ${task.filename}::${task.componentName} (${task.componentKind}) ${duration}`)
+    })
+    console.log('')
+  }
+  
+  // Progress summary
+  const percentage = ((completed / totalComponents) * 100).toFixed(1)
+  const etaStr = eta > 60 ? `${Math.ceil(eta / 60)}m ${Math.ceil(eta % 60)}s` : `${Math.ceil(eta)}s`
+  
+  console.log(`⚡ ${componentsPerMin.toFixed(1)} components/min | ETA: ${etaStr} | ✅ ${completed}/${totalComponents} (${percentage}%) | 🤖 ${analyzing} active | ⏳ ${queued} queued`)
+  
+  if (failed > 0) {
+    console.log(`❌ ${failed} failed`)
+  }
+}
+
+/**
+ * Revolutionary parallel component indexing with live progress dashboard
  */
 async function indexComponentsSystematically(
   componentList: Array<{filename: string, components: Array<{name: string, kind: string}>}>, 
@@ -277,107 +363,247 @@ async function indexComponentsSystematically(
   verbose: boolean,
   apiKey: string
 ): Promise<void> {
-  // Calculate totals for progress tracking
-  const totalFiles = componentList.length
   const totalComponents = componentList.reduce((sum, file) => sum + file.components.length, 0)
-  let indexed = 0
-  let fileProcessed = 0
-
+  const startTime = Date.now()
+  
   if (verbose) {
-    console.log(`🔄 Starting systematic indexing with LLM descriptions...`)
-    console.log(`📊 Processing ${totalFiles} files with ${totalComponents} total components`)
+    console.log(`🚀 PARALLEL PROCESSING INITIATED`)
+    console.log(`📊 Preparing ${totalComponents} components for simultaneous LLM analysis...`)
     console.log('')
   }
 
-  // Process components file by file for efficiency
+  // Phase 1: Pre-cache all file contents and symbol details
+  const fileCache = new Map<string, string>()
+  const symbolCache = new Map<string, any>()
+  
+  if (verbose) {
+    console.log('🗂️ Pre-caching file contents and symbol details...')
+  }
+  
   for (const fileEntry of componentList) {
-    fileProcessed++
-    const fileComponents = fileEntry.components
-    
-    if (verbose) {
-      console.log(`📁 Processing ${fileEntry.filename} (${fileComponents.length} components) [${fileProcessed}/${totalFiles}]`)
-    }
-
     try {
-      // Read file content once for all components in this file
+      // Cache file content
       const fileContent = await read_file(fileEntry.filename)
+      fileCache.set(fileEntry.filename, fileContent)
       
-      // Show tree-sitter parsing step
-      if (verbose) {
-        console.log(`🌳 Tree-sitter parsing ${fileEntry.filename}...`)
-      }
-      
-      const symbolsInFile = await list_symbols_in_file(fileEntry.filename)
-      
-      if (verbose) {
-        console.log(`🔍 Found ${symbolsInFile.length} symbols in file`)
-      }
-
-      // Process each component in this file
-      for (const component of fileComponents) {
+      // Cache symbol details for all components in this file
+      for (const component of fileEntry.components) {
         try {
-          indexed++
-          
-          if (verbose) {
-            console.log(`🤖 LLM analyzing: ${component.name} (${component.kind}) [${indexed}/${totalComponents}]`)
-          }
-
-          // Get symbol details using tree-sitter
           const symbolDetails = await get_symbol_details(fileEntry.filename, component.name)
-          
-          // Get LLM description with full architectural context
-          const llmDescription = await getLLMComponentDescription(
-            component.name,
-            component.kind,
-            fileContent,
-            fileEntry.filename,
-            apiKey,
-            verbose
-          )
-          
-          // Create index entry with LLM-generated description
-          const indexResult = await create_index_entry({
-            path: fileEntry.filename,
-            symbolName: component.name,
-            symbolKind: component.kind,
-            startLine: symbolDetails.startLine,
-            endLine: symbolDetails.endLine,
-            content: symbolDetails.content,
-            synthesizedDescription: llmDescription
-          })
-
-          if (verbose) {
-            if (indexResult.success) {
-              console.log(`💾 Stored: ${component.name} with ${symbolDetails.content.split('\n').length} lines of code ✅`)
-            } else {
-              console.log(`⚠️ Failed to store: ${component.name}`)
-            }
-          }
-
+          symbolCache.set(`${fileEntry.filename}::${component.name}`, symbolDetails)
         } catch (error) {
           if (verbose) {
-            console.log(`❌ Error processing ${component.name}: ${error instanceof Error ? error.message : String(error)}`)
+            console.log(`⚠️ Symbol ${component.name} not found in ${fileEntry.filename}, will skip`)
           }
         }
       }
-      
-      if (verbose) {
-        console.log(`✅ Completed ${fileEntry.filename}`)
-        console.log('')
-      }
-
     } catch (error) {
-      if (verbose) {
-        console.log(`❌ Error processing file ${fileEntry.filename}: ${error instanceof Error ? error.message : String(error)}`)
-        console.log('')
-      }
+      console.error(`❌ Failed to cache ${fileEntry.filename}: ${error}`)
+    }
+  }
+  
+  if (verbose) {
+    console.log(`✅ Cached ${fileCache.size} files and ${symbolCache.size} symbols`)
+    console.log('')
+  }
+
+  // Phase 2: Create all component processing tasks
+  const tasks: ComponentTask[] = []
+  
+  for (const fileEntry of componentList) {
+    for (const component of fileEntry.components) {
+      tasks.push({
+        filename: fileEntry.filename,
+        componentName: component.name,
+        componentKind: component.kind,
+        status: 'queued'
+      })
     }
   }
 
+  // Phase 3: Process all components in parallel with live dashboard
+  let dashboardLines = 0
+  let lastUpdate = 0
+  const UPDATE_INTERVAL = 2000 // Update every 2 seconds to reduce spam
+  
+  const updateDashboard = (force = false) => {
+    if (!verbose) return
+    
+    const now = Date.now()
+    if (!force && (now - lastUpdate) < UPDATE_INTERVAL) {
+      return // Rate limit updates
+    }
+    
+    if (dashboardLines > 0) {
+      clearLines(dashboardLines)
+    }
+    updateProgressDashboard(tasks, startTime, totalComponents, force)
+    
+    // Calculate actual lines printed (more accurate counting)
+    const recentCompletions = tasks.filter(t => t.status === 'completed').slice(-3)
+    const currentlyAnalyzing = tasks.filter(t => t.status === 'analyzing').slice(0, 3)
+    const failed = tasks.filter(t => t.status === 'failed').length
+    
+    dashboardLines = 3 // Base: title + empty line + final stats
+    
+    if (recentCompletions.length > 0) {
+      dashboardLines += 1 // "Recently completed:" header
+      dashboardLines += recentCompletions.length * 2 // Each completion = 2 lines (name + description)
+      dashboardLines += 1 // Empty line after completions
+    }
+    
+    if (currentlyAnalyzing.length > 0) {
+      dashboardLines += 1 // "Currently analyzing:" header  
+      dashboardLines += currentlyAnalyzing.length // Each analysis = 1 line
+      dashboardLines += 1 // Empty line after analyzing
+    }
+    
+    if (failed > 0) {
+      dashboardLines += 1 // Failed line
+    }
+    
+    lastUpdate = now
+  }
+  
   if (verbose) {
-    console.log(`✅ Indexing complete - ${indexed} components stored with LLM descriptions`)
+    updateDashboard(true)
+  }
+  
+  // Periodic dashboard updates
+  const dashboardInterval = verbose ? setInterval(() => {
+    updateDashboard(false)
+  }, UPDATE_INTERVAL) : null
+
+  // Create promises for all components
+  const componentPromises = tasks.map(async (task, index) => {
+    const fileContent = fileCache.get(task.filename)
+    const symbolDetails = symbolCache.get(`${task.filename}::${task.componentName}`)
+    
+    if (!fileContent || !symbolDetails) {
+      task.status = 'failed'
+      task.error = 'Missing cached data'
+      if (verbose) updateDashboard()
+      return
+    }
+
+    try {
+      // Mark as analyzing
+      task.status = 'analyzing'
+      task.startTime = Date.now()
+      
+      // Get LLM description with cached file content
+      const llmDescription = await getLLMComponentDescription(
+        task.componentName,
+        task.componentKind,
+        fileContent,
+        task.filename,
+        apiKey,
+        false // Don't show individual verbose logs
+      )
+      
+      // Create index entry
+      const indexResult = await create_index_entry({
+        path: task.filename,
+        symbolName: task.componentName,
+        symbolKind: task.componentKind,
+        startLine: symbolDetails.startLine,
+        endLine: symbolDetails.endLine,
+        content: symbolDetails.content,
+        synthesizedDescription: llmDescription
+      })
+
+      if (indexResult.success) {
+        task.status = 'completed'
+        task.description = llmDescription // Store full description for final report
+      } else {
+        task.status = 'failed'
+        task.error = 'Database storage failed'
+      }
+      
+    } catch (error) {
+      task.status = 'failed'
+      task.error = error instanceof Error ? error.message : String(error)
+    }
+  })
+
+  // Wait for all components to complete
+  await Promise.allSettled(componentPromises)
+  
+  // Clean up interval
+  if (dashboardInterval) {
+    clearInterval(dashboardInterval)
+  }
+  
+  // Final results
+  const completed = tasks.filter(t => t.status === 'completed').length
+  const failed = tasks.filter(t => t.status === 'failed').length
+  const totalTime = (Date.now() - startTime) / 1000
+  const avgSpeed = totalTime > 0 ? (completed / totalTime * 60) : 0
+  
+  if (verbose) {
+    // Clear dynamic dashboard but leave a final summary with recently completed
+    if (dashboardLines > 0) {
+      clearLines(dashboardLines)
+    }
+    
+    // Show ALL completed components for permanent reference
+    const finalRecentCompletions = tasks
+      .filter(t => t.status === 'completed')
+      .reverse() // Show most recent first, but show ALL completed
+    
+    if (finalRecentCompletions.length > 0) {
+      console.log('📁 Final completed components:')
+      finalRecentCompletions.forEach((task, index) => {
+        // Show FULL description in final report (no truncation)
+        const fullDesc = task.description || 'Description generated'
+        console.log(`✅ ${task.filename}::${task.componentName}`)
+        console.log('   ---')
+        
+        // Format multiline description with proper indentation and word wrapping
+        // Split on newlines first, then word wrap long lines
+        const paragraphs = fullDesc.split('\n')
+        paragraphs.forEach(paragraph => {
+          if (paragraph.trim() === '') {
+            console.log('   ') // Empty line
+          } else {
+            // Word wrap long lines to reasonable width (100 chars)
+            const words = paragraph.split(' ')
+            let currentLine = '   '
+            
+            words.forEach(word => {
+              if (currentLine.length + word.length + 1 > 103) { // 100 + 3 for indent
+                console.log(currentLine)
+                currentLine = `   ${word}`
+              } else {
+                currentLine += (currentLine === '   ' ? word : ` ${word}`)
+              }
+            })
+            
+            if (currentLine.trim() !== '') {
+              console.log(currentLine)
+            }
+          }
+        })
+        console.log('   ---')
+        console.log('') // Empty line between components for readability
+      })
+    }
+    
+    console.log('🎉 PARALLEL PROCESSING COMPLETE!')
+    console.log(`📊 Results: ${completed}/${totalComponents} components indexed successfully`)
+    if (failed > 0) {
+      console.log(`❌ Failed: ${failed} components`)
+      // Show failed components
+      const failedTasks = tasks.filter(t => t.status === 'failed')
+      failedTasks.forEach(task => {
+        console.log(`   - ${task.filename}::${task.componentName}: ${task.error}`)
+      })
+    }
+    console.log(`⚡ Performance: ${avgSpeed.toFixed(1)} components/min`)
+    console.log(`⏱️ Total time: ${totalTime.toFixed(1)}s`)
+    console.log(`🗄️ Database: All components stored with code blocks and architectural context`)
   } else {
-    console.log(`✅ Indexing complete - ${indexed} components stored`)
+    console.log(`✅ Indexing complete - ${completed} components stored`)
   }
 }
 

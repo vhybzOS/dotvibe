@@ -149,7 +149,7 @@
 - **Group changes by type** (Added/Fixed/Changed/Removed)
 
 **Stage 6 - System Cleanup**:
-- Archive old CHANGELOG.md entries (keep last 3 versions)
+- **Add new entry to top of CHANGELOG.md** (preserving all previous history)
 - Reset prd.md and tests.md for next development cycle
 - **Commit version bump** with message: `chore: release v{version}`
 - **Push git tag** to trigger release automation
