@@ -32,8 +32,11 @@ export const indexCommand = (
     ensureWorkspaceReady(),
     Effect.flatMap(() =>
       Effect.tryPromise({
-        try: () => runGuidedExploration(targetPath, indexOptions.verbose),
-        catch: (error) => createConfigurationError(error, 'Failed to run Mastra guided exploration')
+        try: async () => {
+          await runGuidedExploration(targetPath, indexOptions.verbose)
+          return void 0 // Explicitly return void for Effect.tryPromise
+        },
+        catch: (error) => createConfigurationError(error, 'Failed to run guided exploration')
       })
     )
   )

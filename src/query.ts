@@ -8,7 +8,7 @@ import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
 import { createStorageError, type VibeError } from './index.ts'
 import { ensureWorkspaceReady } from './workspace.ts'
-import { connectToDatabase, searchVectors, type SearchOptions } from './database.ts'
+import { connectToDatabaseEffect, searchCodeSymbols, type SearchOptions } from './database.ts'
 import { generateSingleEmbedding } from './embeddings.ts'
 
 // Query schemas
@@ -118,7 +118,7 @@ export const searchCode = (
     Effect.flatMap(() => generateSingleEmbedding(queryText)),
     Effect.flatMap(queryEmbedding =>
       pipe(
-        connectToDatabase('.vibe/code.db'),
+        connectToDatabaseEffect('.vibe/code.db'),
         Effect.flatMap(db => {
           const searchOptions: SearchOptions = {
             limit: options.limit,
@@ -126,7 +126,7 @@ export const searchCode = (
           }
           
           return pipe(
-            searchVectors(db, queryEmbedding.embedding, searchOptions),
+            searchCodeSymbols(db, queryEmbedding.embedding, searchOptions),
             Effect.tap(() => Effect.tryPromise({
               try: () => db.close(),
               catch: (error) => createStorageError(error, 'database', 'Failed to close database')
@@ -164,14 +164,14 @@ export const executeQuery = (
   const startTime = Date.now()
   const queryOptions = QueryOptionsSchema.parse(options)
   
-  return Effect.flatMap(
+  return pipe(
     searchCode(queryText, queryOptions),
-    (results) => Effect.sync(() => ({
+    Effect.flatMap((results) => Effect.sync(() => ({
       query: queryText,
       results,
       totalResults: results.length,
       executionTime: Date.now() - startTime
-    }))
+    })))
   )
 }
 

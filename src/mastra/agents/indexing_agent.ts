@@ -5,10 +5,9 @@
  * @tested_by tests/indexing-agent.test.ts
  */
 
-import { google } from '@ai-sdk/google'
-import { Agent } from '@mastra/core/agent'
-import { createTool } from '@mastra/core/tools'
 import { z } from 'zod/v4'
+import { GoogleGenAI, FunctionCallingConfigMode, type FunctionDeclaration, Type } from '@google/genai'
+import { createTool, zodToFunctionDeclaration } from '../tools/tool-definition.ts'
 import {
   list_filesystem,
   read_file,
@@ -17,7 +16,13 @@ import {
   create_index_entry
 } from '../tools/code_analysis_tools.ts'
 
-const systemInstruction = `You are an expert programmer and system architect. Your goal is to deeply understand this codebase. I have provided you with a set of tools to explore the filesystem and the code's structure. Your task is to reason step-by-step, form a hypothesis about the project, and explore it until you understand the purpose of each major symbol. When you fully understand a symbol, you MUST call the create_index_entry tool. Your description should be concise and include critical code snippets where they are more descriptive than words. Begin by listing the contents of the root directory.`
+const systemInstruction = `You are an expert programmer and system architect. Your goal is to deeply understand this codebase. I have provided you with a set of tools to explore the filesystem and the code's structure. 
+
+The list_filesystem tool returns full file paths that you can directly use with read_file and other tools - no path manipulation needed.
+
+Your task is to reason step-by-step, form a hypothesis about the project, and explore it until you understand the purpose of each major symbol. When you fully understand a symbol, you MUST call the create_index_entry tool with a concise description that includes critical code snippets where they are more descriptive than words. 
+
+Begin by listing the contents of the root directory to get an overview.`
 
 // Create tools using Mastra patterns
 const listFilesystemTool = createTool({
@@ -101,27 +106,26 @@ const createIndexEntryTool = createTool({
   }
 })
 
-// Create the indexing agent
-const indexingAgent = new Agent({
-  name: "Code Indexing Agent",
-  instructions: systemInstruction,
-  model: google("gemini-2.5-flash"),
-  tools: {
-    listFilesystemTool,
-    readFileTool,
-    listSymbolsTool,
-    getSymbolDetailsTool,
-    createIndexEntryTool
-  }
-})
+// Tool registry for hybrid orchestrator
+const tools = [
+  listFilesystemTool,
+  readFileTool,
+  listSymbolsTool,
+  getSymbolDetailsTool,
+  createIndexEntryTool
+];
 
 /**
- * Run guided exploration of codebase using Mastra agent
+ * Run guided exploration of codebase using hybrid orchestrator
  */
 export async function runGuidedExploration(rootPath: string, verbose: boolean = false): Promise<void> {
   try {
-    if (!verbose) {
-      console.log('🚀 Starting intelligent codebase exploration with Mastra...')
+    if (verbose) {
+      console.log('🚀 Starting intelligent codebase exploration with hybrid orchestrator...')
+      console.log('🛠️ Loaded 5 tools for AI agent')
+      console.log('💬 Starting conversation with Gemini via Google AI SDK')
+    } else {
+      console.log('🚀 Starting intelligent codebase exploration...')
     }
 
     // Check API key
@@ -130,24 +134,153 @@ export async function runGuidedExploration(rootPath: string, verbose: boolean = 
       throw new Error('GOOGLE_API_KEY environment variable not found')
     }
 
+    // --- HYBRID ORCHESTRATOR IMPLEMENTATION ---
+    // NOTE: The following manual orchestration loop replaces the Mastra agent.run()
+    // due to a Zod v4 dependency conflict in the current version of Mastra.
+    // TODO_MASTRA_UPGRADE: When Mastra supports Zod v4, this entire block
+    // can be deleted and replaced with the original line:
+    // const result = await indexingAgent.generate(`Begin by exploring the codebase at '${rootPath}'.`)
+
+    // Initialize Google AI SDK
+    const genAI = new GoogleGenAI({ apiKey })
+    
+    // Convert our tools to Google AI function declarations
+    const functionDeclarations = tools.map(zodToFunctionDeclaration)
+    
     if (verbose) {
-      console.log('🛠️ Loaded 5 tools for Mastra agent')
-      console.log('💬 Starting conversation with Gemini via Mastra')
+      console.log(`🔧 Registered ${functionDeclarations.length} tools with Gemini`)
     }
 
-    // Execute the agent with initial exploration prompt
-    const result = await indexingAgent.generate(`Begin by exploring the codebase at '${rootPath}'.`)
+    // Initialize base configuration for Google AI SDK v1.9.0
+    const baseConfig = {
+      model: "gemini-2.5-flash",
+      config: {
+        toolConfig: {
+          functionCallingConfig: {
+            mode: FunctionCallingConfigMode.ANY,
+            allowedFunctionNames: tools.map(t => t.id)
+          }
+        },
+        tools: [{ functionDeclarations }],
+        systemInstruction: systemInstruction
+      }
+    }
+    let currentMessage = `Begin by exploring the codebase at '${rootPath}'.`
+    
+    if (verbose) {
+      console.log(`💬 Sending initial message: "${currentMessage}"`)
+    }
+
+    const MAX_ITERATIONS = 20
+    let iteration = 0
+
+    while (iteration < MAX_ITERATIONS) {
+      iteration++
+      
+      if (verbose) {
+        console.log(`\n--- Iteration ${iteration}/${MAX_ITERATIONS} ---`)
+      }
+
+      // Send message to model using Google AI SDK v1.9.0 API
+      const result = await genAI.models.generateContent({
+        ...baseConfig,
+        contents: currentMessage
+      })
+      
+      // After first message, let the conversation flow naturally
+      currentMessage = "Continue with your exploration."
+      
+      const functionCalls = result.functionCalls
+
+      if (!functionCalls || functionCalls.length === 0) {
+        // No function calls - agent has finished
+        if (verbose) {
+          console.log(`🤖 Final LLM Response: ${result.text || 'No text response'}`)
+        }
+        break
+      }
+
+      // Execute function calls
+      const functionResponses = []
+      
+      for (const functionCall of functionCalls) {
+        const toolName = functionCall.name
+        const args = functionCall.args || {}
+        
+        if (verbose) {
+          console.log(`🤖 LLM => Tool Call: ${toolName}(${JSON.stringify(args)})`)
+        }
+
+        // Find and execute the tool
+        const tool = tools.find(t => t.id === toolName)
+        if (!tool) {
+          const errorResponse = { error: `Tool '${toolName}' not found` }
+          functionResponses.push({
+            name: toolName,
+            response: errorResponse
+          })
+          if (verbose) {
+            console.log(`❌ Tool not found: ${toolName}`)
+          }
+          continue
+        }
+
+        try {
+          // Validate input with Zod schema
+          const validatedArgs = tool.inputSchema.parse(args)
+          
+          // Execute tool
+          const toolResult = await tool.execute({ context: validatedArgs })
+          
+          functionResponses.push({
+            name: toolName,
+            response: toolResult
+          })
+          
+          if (verbose) {
+            console.log(`✅ Tool executed successfully: ${toolName}`)
+          }
+          
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          const errorResponse = { error: errorMessage }
+          functionResponses.push({
+            name: toolName,
+            response: errorResponse
+          })
+          if (verbose) {
+            console.log(`❌ Tool execution failed: ${toolName} - ${errorMessage}`)
+          }
+        }
+      }
+
+      // Send function responses back to model
+      if (verbose) {
+        console.log(`📤 Sending ${functionResponses.length} function responses back to LLM...`)
+      }
+      
+      // For simplicity in this hybrid approach, format function responses as text
+      // TODO_MASTRA_UPGRADE: Use proper function response format when upgrading to Mastra
+      const responseText = functionResponses.map(fr => 
+        `Function ${fr.name} result: ${JSON.stringify(fr.response)}`
+      ).join('\n')
+      
+      currentMessage = `Here are the function results:\n${responseText}\n\nBased on these results, please continue your exploration.`
+    }
+
+    if (iteration >= MAX_ITERATIONS) {
+      console.log(`⚠️ Reached maximum iterations (${MAX_ITERATIONS})`)
+    }
 
     if (verbose) {
-      console.log(`🤖 Final LLM Response: ${result.text}`)
-      console.log('\n✅ Mastra conversation completed - codebase exploration finished')
+      console.log('\n✅ Intelligent codebase exploration completed')
     } else {
       console.log('✅ Intelligent codebase exploration completed')
     }
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error(`❌ Mastra agent error: ${errorMessage}`)
+    console.error(`❌ Hybrid orchestrator error: ${errorMessage}`)
     throw error
   }
 }

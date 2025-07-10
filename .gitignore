@@ -66,3 +66,9 @@ yarn-error.log*
 # Development artifacts
 .vscode/settings.json
 .idea/workspace.xml
+
+# Dotvibe
+.vibe/
+
+# Mastra
+mastra/

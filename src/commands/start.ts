@@ -7,7 +7,7 @@
 import { Effect, pipe } from 'effect'
 import { createStorageError, type VibeError } from '../index.ts'
 import { ensureWorkspaceInitialized } from '../workspace.ts'
-import { connectToDatabase, createDatabaseSchema } from '../database.ts'
+import { connectToDatabase, connectToDatabaseEffect, createDatabaseSchema } from '../database.ts'
 import { isServerRunning, getServerInfo, startSurrealServer } from '../surreal-server.ts'
 
 
@@ -16,7 +16,7 @@ import { isServerRunning, getServerInfo, startSurrealServer } from '../surreal-s
  */
 const startServerAndDatabase = (): Effect.Effect<void, VibeError> =>
   pipe(
-    connectToDatabase('.vibe/code.db'),
+    connectToDatabaseEffect('.vibe/code.db'),
     Effect.flatMap(db =>
       pipe(
         createDatabaseSchema(db),

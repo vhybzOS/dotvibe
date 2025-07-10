@@ -5,8 +5,7 @@
  * @tested_by tests/code-analysis-tools.test.ts
  */
 
-import { Parser } from 'web-tree-sitter'
-import * as TypeScript from 'tree-sitter-typescript'
+import { Parser, Language } from 'web-tree-sitter'
 import { generateSingleEmbedding } from '../../embeddings.ts'
 import { connectToDatabase } from '../../database.ts'
 import { Effect, pipe } from 'effect'
@@ -37,22 +36,33 @@ async function initializeParser(): Promise<Parser> {
   
   await Parser.init()
   parser = new Parser()
-  parser.setLanguage(TypeScript.typescript)
+  
+  // Load TypeScript language from WASM file
+  // This is the correct approach for web-tree-sitter with Deno
+  const wasmPath = '/home/keyvan/.cache/deno/npm/registry.npmjs.org/tree-sitter-typescript/0.23.2/tree-sitter-typescript.wasm'
+  const wasmBytes = await Deno.readFile(wasmPath)
+  const language = await Language.load(wasmBytes)
+  parser.setLanguage(language)
+  
   return parser
 }
 
 /**
  * List all files and directories in a given path
+ * Returns full paths relative to current working directory for easier LLM usage
  */
 export async function list_filesystem(path: string): Promise<string[]> {
   try {
     const entries: string[] = []
+    const basePath = path === '.' || path === './' ? '' : path
     for await (const entry of Deno.readDir(path)) {
-      entries.push(entry.name)
+      // Return full path by combining directory path with entry name
+      const fullPath = basePath ? `${basePath}/${entry.name}` : entry.name
+      entries.push(fullPath)
     }
     return entries.sort()
   } catch (error) {
-    throw new Error(`Failed to list directory ${path}: ${error.message}`)
+    throw new Error(`Failed to list directory ${path}: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -63,7 +73,7 @@ export async function read_file(path: string): Promise<string> {
   try {
     return await Deno.readTextFile(path)
   } catch (error) {
-    throw new Error(`Failed to read file ${path}: ${error.message}`)
+    throw new Error(`Failed to read file ${path}: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -75,6 +85,10 @@ export async function list_symbols_in_file(path: string): Promise<SymbolInfo[]> 
     const content = await Deno.readTextFile(path)
     const parser = await initializeParser()
     const tree = parser.parse(content)
+    
+    if (!tree) {
+      throw new Error('Failed to parse source code - tree is null')
+    }
     
     const symbols: SymbolInfo[] = []
     
@@ -132,7 +146,7 @@ export async function list_symbols_in_file(path: string): Promise<SymbolInfo[]> 
     return symbols
     
   } catch (error) {
-    throw new Error(`Failed to parse symbols in ${path}: ${error.message}`)
+    throw new Error(`Failed to parse symbols in ${path}: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -144,6 +158,10 @@ export async function get_symbol_details(path: string, symbolName: string): Prom
     const content = await Deno.readTextFile(path)
     const parser = await initializeParser()
     const tree = parser.parse(content)
+    
+    if (!tree) {
+      throw new Error('Failed to parse source code - tree is null')
+    }
     
     let foundSymbol: SymbolDetails | null = null
     
@@ -199,7 +217,7 @@ export async function get_symbol_details(path: string, symbolName: string): Prom
     return foundSymbol
     
   } catch (error) {
-    throw new Error(`Failed to get symbol details for '${symbolName}' in ${path}: ${error.message}`)
+    throw new Error(`Failed to get symbol details for '${symbolName}' in ${path}: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -238,8 +256,7 @@ export async function create_index_entry(data: {
     
     // Upsert record into code_symbols table
     const query = `
-      UPSERT $id CONTENT {
-        id: $id,
+      UPSERT code_symbols:⟨$record_id⟩ CONTENT {
         file_path: $file_path,
         symbol_name: $symbol_name,
         symbol_kind: $symbol_kind,
@@ -252,7 +269,7 @@ export async function create_index_entry(data: {
     `
     
     await db.query(query, {
-      id: `code_symbols:${recordId}`,
+      record_id: recordId,
       file_path: data.path,
       symbol_name: data.symbolName,
       symbol_kind: data.symbolKind,

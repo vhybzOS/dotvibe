@@ -189,7 +189,7 @@ export const insertFileMetadata = (
   })
 
 /**
- * Search vectors using cosine similarity
+ * Search vectors using cosine similarity (legacy)
  */
 export const searchVectors = (
   db: DatabaseConnection,
@@ -225,6 +225,52 @@ export const searchVectors = (
       })) : []
     },
     catch: (error) => createStorageError(error, 'search', 'Failed to search vectors')
+  })
+
+/**
+ * Search code symbols using semantic similarity on descriptions and embeddings
+ */
+export const searchCodeSymbols = (
+  db: DatabaseConnection,
+  queryVector: number[],
+  options: SearchOptions
+): Effect.Effect<SearchResult[], VibeError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const result = await db.query(`
+        SELECT 
+          file_path,
+          symbol_name,
+          symbol_kind,
+          description,
+          vector::similarity::cosine(embedding, $query_vector) AS similarity,
+          start_line,
+          end_line
+        FROM code_symbols
+        WHERE vector::similarity::cosine(embedding, $query_vector) >= $threshold
+        ORDER BY similarity DESC
+        LIMIT $limit;
+      `, {
+        query_vector: queryVector,
+        threshold: options.threshold,
+        limit: options.limit
+      })
+      
+      // Extract results from SurrealDB response format
+      const symbols = Array.isArray(result) && result.length > 0 ? result[0] : []
+      
+      return Array.isArray(symbols) ? symbols.map(s => ({
+        file_path: s.file_path,
+        content: `${s.symbol_name} (${s.symbol_kind}): ${s.description}`,
+        similarity: s.similarity,
+        created_at: new Date().toISOString(), // Use current time since this is a symbol result
+        symbol_name: s.symbol_name,
+        symbol_kind: s.symbol_kind,
+        start_line: s.start_line,
+        end_line: s.end_line
+      })) : []
+    },
+    catch: (error) => createStorageError(error, 'search', 'Failed to search code symbols')
   })
 
 /**

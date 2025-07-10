@@ -1,6 +1,6 @@
 {
   "name": "@dotvibe/query",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "LLM-Native Context Query System with 100x Compression",
   "homepage": "https://dotvibe.dev",
   "repository": "https://github.com/vhybzOS/dotvibe",
@@ -23,11 +23,9 @@
   "imports": {
     "effect": "npm:effect@3.16.7",
     "commander": "npm:commander@12.1.0",
-    "zod": "npm:zod@3.25.76",
+    "zod": "npm:zod@4.0.2",
     "zod/v4": "npm:zod@4.0.2",
-    "@google/genai": "npm:@google/genai@^1.8.0",
-    "@mastra/core": "npm:@mastra/core@^0.10.12",
-    "@ai-sdk/google": "npm:@ai-sdk/google@^1.2.22",
+    "@google/genai": "npm:@google/genai@^1.9.0",
     "surrealdb": "npm:surrealdb@^1.3.2",
     "web-tree-sitter": "npm:web-tree-sitter@^0.25.6",
     "tree-sitter-typescript": "npm:tree-sitter-typescript@^0.23.2",
