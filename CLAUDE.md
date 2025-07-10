@@ -460,6 +460,62 @@ const jsonSchema = z.toJSONSchema(mySchema)
 - Automatic description propagation
 - Works seamlessly with discriminated unions
 
+#### Phase 2 LLM Orchestrator - Advanced Zod Integration
+
+**Zod 4.0.2 Stable - Production Ready JSON Schema**:
+```typescript
+// ✅ Zod 4.0.2 stable release - no more /v4 suffix needed
+import { z } from 'zod'  // Standard import for new projects
+import { z } from 'zod/v4'  // Legacy compatibility (keep both during transition)
+
+// Deno configuration for dual imports
+"imports": {
+  "zod": "npm:zod@4.0.2",
+  "zod/v4": "npm:zod@4.0.2"  // Maintain backward compatibility
+}
+```
+
+**Revolutionary JSON Schema Integration**:
+```typescript
+// ✅ Real-world usage in LLM function calling
+const toolSchemas = {
+  list_filesystem: {
+    description: 'Lists all files and directories in a given path.',
+    parameters: z.object({
+      path: z.string().describe('The directory path to list contents from')
+    })
+  }
+}
+
+// Bridge Zod schemas to Google AI SDK FunctionDeclaration format
+export function getGeminiToolDeclarations(): FunctionDeclaration[] {
+  const declarations: FunctionDeclaration[] = []
+  
+  for (const [toolName, toolSchema] of Object.entries(toolSchemas)) {
+    // Native JSON schema generation - works perfectly
+    const jsonSchema = z.toJSONSchema(toolSchema.parameters)
+    
+    // Generic $schema property stripping for API compatibility
+    const { $schema, ...cleanParameters } = jsonSchema
+    
+    declarations.push({
+      name: toolName,
+      description: toolSchema.description,
+      parameters: cleanParameters  // Perfect Gemini API format
+    })
+  }
+  
+  return declarations
+}
+```
+
+**Production Benefits Realized**:
+- **Zero External Dependencies**: No `zod-to-json-schema` package needed
+- **Perfect API Compatibility**: Generates exact format required by Google AI SDK
+- **Schema Validation + Function Calling**: Single source of truth for both validation and LLM tools
+- **Automatic Description Propagation**: `.describe()` methods flow through to API
+- **Type Safety**: Full TypeScript inference maintained throughout conversion
+
 **Tree-sitter Integration Patterns (Hard-Won Knowledge)**:
 
 **Critical Import Pattern**:

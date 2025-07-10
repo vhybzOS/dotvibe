@@ -46,9 +46,20 @@ export type SearchResult = z.infer<typeof SearchResultSchema>
 export type DatabaseConnection = Surreal
 
 /**
- * Connect to SurrealDB server (automatically starts server if needed)
+ * Simple database connection for toolbox usage
  */
-export const connectToDatabase = (dbPath: string): Effect.Effect<DatabaseConnection, VibeError> =>
+export async function connectToDatabase(): Promise<DatabaseConnection> {
+  const db = new Surreal()
+  await db.connect('http://127.0.0.1:4243/rpc')
+  await db.signin({ username: 'root', password: 'root' })
+  await db.use({ namespace: 'vibe', database: 'code' })
+  return db
+}
+
+/**
+ * Connect to SurrealDB server (automatically starts server if needed) - Effect version
+ */
+export const connectToDatabaseEffect = (dbPath: string): Effect.Effect<DatabaseConnection, VibeError> =>
   pipe(
     // Ensure SurrealDB server is running (start if needed)
     ensureSurrealServer(dbPath),
@@ -79,14 +90,20 @@ export const connectToDatabase = (dbPath: string): Effect.Effect<DatabaseConnect
 export const createDatabaseSchema = (db: DatabaseConnection): Effect.Effect<void, VibeError> =>
   Effect.tryPromise({
     try: async () => {
-      // Create vectors table
+      // Create code_symbols table
       await db.query(`
-        DEFINE TABLE vectors SCHEMAFULL;
-        DEFINE FIELD file_path ON vectors TYPE string;
-        DEFINE FIELD content ON vectors TYPE string;
-        DEFINE FIELD embedding ON vectors TYPE array<float>;
-        DEFINE FIELD created_at ON vectors TYPE datetime;
-        DEFINE INDEX vectors_path_idx ON vectors FIELDS file_path;
+        DEFINE TABLE code_symbols SCHEMAFULL;
+        DEFINE FIELD id ON code_symbols TYPE string;
+        DEFINE FIELD file_path ON code_symbols TYPE string;
+        DEFINE FIELD symbol_name ON code_symbols TYPE string;
+        DEFINE FIELD symbol_kind ON code_symbols TYPE string;
+        DEFINE FIELD start_line ON code_symbols TYPE number;
+        DEFINE FIELD end_line ON code_symbols TYPE number;
+        DEFINE FIELD content_hash ON code_symbols TYPE string;
+        DEFINE FIELD description ON code_symbols TYPE string;
+        DEFINE FIELD embedding ON code_symbols TYPE array<float>;
+        DEFINE INDEX symbols_path_idx ON code_symbols FIELDS file_path;
+        DEFINE INDEX symbols_name_idx ON code_symbols FIELDS symbol_name;
       `)
       
       // Create file metadata table
