@@ -121,7 +121,12 @@ const tools = [
  */
 export async function runLLMFirstIndexing(rootPath: string, codebaseDigest: string, verbose: boolean = false): Promise<void> {
   try {
+    // Enhanced logging for digest
+    const digestLines = codebaseDigest.split('\n').length
+    const digestChars = codebaseDigest.length
+    
     if (verbose) {
+      console.log(`📊 Codebase digest prepared: ${digestLines} lines, ${digestChars} characters`)
       console.log('💬 LLM Architectural Analysis...')
     }
 
@@ -169,11 +174,20 @@ After this, I will systematically ask you to describe each component with full a
     const componentList = extractComponentListFromResponse(analysisResult.text || '')
     
     if (verbose) {
-      console.log(`📋 Extracted ${componentList.length} components for indexing`)
+      console.log(`📋 Component extraction result:`)
+      console.log(`   - ${componentList.length} files found`)
+      const totalComponents = componentList.reduce((sum, file) => sum + file.components.length, 0)
+      console.log(`   - ${totalComponents} total components to index`)
+      
+      // Show breakdown by file
+      componentList.forEach(file => {
+        console.log(`   - ${file.filename}: ${file.components.length} components`)
+      })
+      console.log('')
     }
 
-    // Systematic component indexing with progress tracking
-    await indexComponentsSystematically(componentList, rootPath, verbose)
+    // Systematic component indexing with progress tracking and API key
+    await indexComponentsSystematically(componentList, rootPath, verbose, apiKey)
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
@@ -211,64 +225,157 @@ function extractComponentListFromResponse(response: string): Array<{filename: st
 }
 
 /**
- * Systematically index components with progress tracking
+ * Get LLM description for a specific component with architectural context
+ */
+async function getLLMComponentDescription(
+  componentName: string,
+  componentKind: string,
+  fileContent: string,
+  filePath: string,
+  apiKey: string,
+  verbose: boolean
+): Promise<string> {
+  try {
+    const genAI = new GoogleGenAI({ apiKey })
+    
+    const prompt = `Describe to a potent coder LLM what this element "${componentName}" is. The coder sees the full code below. Your description provides additional context, e.g. where else this block is used and what role it plays in the overall architecture. Just provide the description in your answer.
+
+File: ${filePath}
+Element: ${componentName} (${componentKind})
+
+Code:
+${fileContent}`
+
+    const result = await genAI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt
+    })
+
+    const description = result.text || `${componentName} (${componentKind}): AI-generated description unavailable`
+    
+    if (verbose) {
+      console.log(`💬 LLM description (${description.length} chars): "${description.slice(0, 100)}${description.length > 100 ? '...' : ''}"`)
+    }
+    
+    return description
+
+  } catch (error) {
+    const fallbackDescription = `${componentName} (${componentKind}): Error generating AI description - ${error instanceof Error ? error.message : String(error)}`
+    if (verbose) {
+      console.log(`⚠️ LLM description failed, using fallback`)
+    }
+    return fallbackDescription
+  }
+}
+
+/**
+ * Systematically index components with progress tracking and per-component LLM analysis
  */
 async function indexComponentsSystematically(
   componentList: Array<{filename: string, components: Array<{name: string, kind: string}>}>, 
   rootPath: string, 
-  verbose: boolean
+  verbose: boolean,
+  apiKey: string
 ): Promise<void> {
-  // Flatten component list for progress tracking
-  const allComponents = componentList.flatMap(file => 
-    file.components.map(comp => ({
-      filename: file.filename,
-      name: comp.name,
-      kind: comp.kind
-    }))
-  )
-
-  const totalComponents = allComponents.length
+  // Calculate totals for progress tracking
+  const totalFiles = componentList.length
+  const totalComponents = componentList.reduce((sum, file) => sum + file.components.length, 0)
   let indexed = 0
+  let fileProcessed = 0
 
   if (verbose) {
-    console.log(`🔄 Starting systematic indexing of ${totalComponents} components...`)
+    console.log(`🔄 Starting systematic indexing with LLM descriptions...`)
+    console.log(`📊 Processing ${totalFiles} files with ${totalComponents} total components`)
+    console.log('')
   }
 
-  for (const component of allComponents) {
+  // Process components file by file for efficiency
+  for (const fileEntry of componentList) {
+    fileProcessed++
+    const fileComponents = fileEntry.components
+    
+    if (verbose) {
+      console.log(`📁 Processing ${fileEntry.filename} (${fileComponents.length} components) [${fileProcessed}/${totalFiles}]`)
+    }
+
     try {
-      // Progress tracking with console overwrite
-      indexed++
+      // Read file content once for all components in this file
+      const fileContent = await read_file(fileEntry.filename)
+      
+      // Show tree-sitter parsing step
       if (verbose) {
-        process.stdout.write(`\r📊 Indexing: ${indexed}/${totalComponents} (${component.name})`)
+        console.log(`🌳 Tree-sitter parsing ${fileEntry.filename}...`)
+      }
+      
+      const symbolsInFile = await list_symbols_in_file(fileEntry.filename)
+      
+      if (verbose) {
+        console.log(`🔍 Found ${symbolsInFile.length} symbols in file`)
       }
 
-      // Get symbol details using existing tools
-      const symbolDetails = await get_symbol_details(component.filename, component.name)
-      
-      // Create index entry with enhanced architectural context
-      const indexResult = await create_index_entry({
-        path: component.filename,
-        symbolName: component.name,
-        symbolKind: component.kind,
-        startLine: symbolDetails.startLine,
-        endLine: symbolDetails.endLine,
-        content: symbolDetails.content,
-        synthesizedDescription: `${component.name} (${component.kind}): Architectural component from LLM-first analysis of complete system context.`
-      })
+      // Process each component in this file
+      for (const component of fileComponents) {
+        try {
+          indexed++
+          
+          if (verbose) {
+            console.log(`🤖 LLM analyzing: ${component.name} (${component.kind}) [${indexed}/${totalComponents}]`)
+          }
 
-      if (verbose && !indexResult.success) {
-        console.log(`\n⚠️ Failed to index ${component.name}`)
+          // Get symbol details using tree-sitter
+          const symbolDetails = await get_symbol_details(fileEntry.filename, component.name)
+          
+          // Get LLM description with full architectural context
+          const llmDescription = await getLLMComponentDescription(
+            component.name,
+            component.kind,
+            fileContent,
+            fileEntry.filename,
+            apiKey,
+            verbose
+          )
+          
+          // Create index entry with LLM-generated description
+          const indexResult = await create_index_entry({
+            path: fileEntry.filename,
+            symbolName: component.name,
+            symbolKind: component.kind,
+            startLine: symbolDetails.startLine,
+            endLine: symbolDetails.endLine,
+            content: symbolDetails.content,
+            synthesizedDescription: llmDescription
+          })
+
+          if (verbose) {
+            if (indexResult.success) {
+              console.log(`💾 Stored: ${component.name} with ${symbolDetails.content.split('\n').length} lines of code ✅`)
+            } else {
+              console.log(`⚠️ Failed to store: ${component.name}`)
+            }
+          }
+
+        } catch (error) {
+          if (verbose) {
+            console.log(`❌ Error processing ${component.name}: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+      }
+      
+      if (verbose) {
+        console.log(`✅ Completed ${fileEntry.filename}`)
+        console.log('')
       }
 
     } catch (error) {
       if (verbose) {
-        console.log(`\n❌ Error indexing ${component.name}: ${error}`)
+        console.log(`❌ Error processing file ${fileEntry.filename}: ${error instanceof Error ? error.message : String(error)}`)
+        console.log('')
       }
     }
   }
 
   if (verbose) {
-    process.stdout.write(`\n✅ Indexing complete - ${indexed} components stored\n`)
+    console.log(`✅ Indexing complete - ${indexed} components stored with LLM descriptions`)
   } else {
     console.log(`✅ Indexing complete - ${indexed} components stored`)
   }
