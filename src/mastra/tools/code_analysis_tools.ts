@@ -165,6 +165,35 @@ export async function get_symbol_details(path: string, symbolName: string): Prom
     
     let foundSymbol: SymbolDetails | null = null
     
+    // Helper function to find symbol name in a node
+    function findSymbolInNode(node: any, targetName: string, content: string): boolean {
+      // Direct identifier check
+      if (node.type === 'identifier' && content.slice(node.startIndex, node.endIndex) === targetName) {
+        return true
+      }
+      
+      // Check children for identifiers
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i)
+        if (child) {
+          if ((child.type === 'identifier' || child.type === 'type_identifier')) {
+            const name = content.slice(child.startIndex, child.endIndex)
+            if (name === targetName) {
+              return true
+            }
+          }
+          // For variable_declarator, check nested patterns
+          if (child.type === 'variable_declarator') {
+            if (findSymbolInNode(child, targetName, content)) {
+              return true
+            }
+          }
+        }
+      }
+      
+      return false
+    }
+    
     function walkNode(node: any) {
       const symbolTypes = [
         'function_declaration',
@@ -172,29 +201,45 @@ export async function get_symbol_details(path: string, symbolName: string): Prom
         'interface_declaration',
         'type_alias_declaration',
         'enum_declaration',
-        'variable_declaration'
+        'variable_declaration',
+        'export_statement',
+        'lexical_declaration'
       ]
       
       if (symbolTypes.includes(node.type)) {
-        // Check if this node contains our target symbol
-        for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i)
-          if (child && (child.type === 'identifier' || child.type === 'type_identifier')) {
-            const name = content.slice(child.startIndex, child.endIndex)
-            if (name === symbolName) {
-              // Extract the full content of this symbol
-              const symbolContent = content.slice(node.startIndex, node.endIndex)
-              
-              foundSymbol = {
-                name: symbolName,
-                kind: node.type,
-                startLine: node.startPosition.row + 1,
-                endLine: node.endPosition.row + 1,
-                content: symbolContent,
-                filePath: path
+        // Handle export statements
+        if (node.type === 'export_statement') {
+          // Look for declarations inside export statement
+          for (let i = 0; i < node.childCount; i++) {
+            const child = node.child(i)
+            if (child && ['variable_declaration', 'lexical_declaration', 'function_declaration', 'class_declaration', 'interface_declaration', 'type_alias_declaration'].includes(child.type)) {
+              const symbolInExport = findSymbolInNode(child, symbolName, content)
+              if (symbolInExport) {
+                foundSymbol = {
+                  name: symbolName,
+                  kind: child.type,
+                  startLine: node.startPosition.row + 1,
+                  endLine: node.endPosition.row + 1,
+                  content: content.slice(node.startIndex, node.endIndex),
+                  filePath: path
+                }
+                return
               }
-              return
             }
+          }
+        } else {
+          // Handle regular declarations
+          const symbolInNode = findSymbolInNode(node, symbolName, content)
+          if (symbolInNode) {
+            foundSymbol = {
+              name: symbolName,
+              kind: node.type,
+              startLine: node.startPosition.row + 1,
+              endLine: node.endPosition.row + 1,
+              content: content.slice(node.startIndex, node.endIndex),
+              filePath: path
+            }
+            return
           }
         }
       }
@@ -254,7 +299,10 @@ export async function create_index_entry(data: {
     // Construct record ID for upsert
     const recordId = `${data.path}@${data.symbolName}`.replace(/[^a-zA-Z0-9@_]/g, '_')
     
-    // Upsert record into code_symbols table
+    // Get symbol details to extract actual code content
+    const symbolDetails = await get_symbol_details(data.path, data.symbolName)
+    
+    // Upsert record into code_symbols table with enhanced fields
     const query = `
       UPSERT code_symbols:⟨$record_id⟩ CONTENT {
         file_path: $file_path,
@@ -264,6 +312,8 @@ export async function create_index_entry(data: {
         end_line: $end_line,
         content_hash: $content_hash,
         description: $description,
+        code: $code,
+        lines: $lines,
         embedding: $embedding
       }
     `
@@ -277,6 +327,8 @@ export async function create_index_entry(data: {
       end_line: data.endLine,
       content_hash: hashHex,
       description: data.synthesizedDescription,
+      code: symbolDetails.content,
+      lines: [symbolDetails.startLine, symbolDetails.endLine],
       embedding: embeddingResult.embedding
     })
     

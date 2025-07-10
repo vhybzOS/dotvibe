@@ -1,5 +1,5 @@
 /**
- * Vibe Index Command - Mastra-powered intelligent codebase exploration
+ * Vibe Index Command - LLM-First Contextual Indexing
  * 
  * @tested_by tests/index.test.ts
  */
@@ -7,8 +7,9 @@
 import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
 import { createConfigurationError, type VibeError } from '../index.ts'
-import { runGuidedExploration } from '../mastra/agents/indexing_agent.ts'
+import { runLLMFirstIndexing } from '../mastra/agents/indexing_agent.ts'
 import { ensureWorkspaceReady } from '../workspace.ts'
+import { ingestPath, defaultConfigs } from '../path-ingest.ts'
 
 // Index command options schema (simplified for Phase 2)
 export const IndexOptionsSchema = z.object({
@@ -19,7 +20,7 @@ export type IndexOptions = z.infer<typeof IndexOptionsSchema>
 
 /**
  * Main index command implementation
- * Uses Mastra agent with Gemini to intelligently explore and understand the codebase
+ * Uses LLM-First Contextual Indexing: full codebase context → architectural analysis → systematic indexing
  */
 export const indexCommand = (
   targetPath: string,
@@ -33,10 +34,23 @@ export const indexCommand = (
     Effect.flatMap(() =>
       Effect.tryPromise({
         try: async () => {
-          await runGuidedExploration(targetPath, indexOptions.verbose)
+          // Phase 1: Generate complete codebase digest using path-ingest
+          if (indexOptions.verbose) {
+            console.log('🚀 Generating codebase digest...')
+          }
+          
+          const ingestResult = await ingestPath(targetPath, defaultConfigs.typescript)
+          
+          if (indexOptions.verbose) {
+            console.log(`📊 Found ${ingestResult.stats.fileCount} files (${ingestResult.stats.totalLines} lines total)`)
+          }
+          
+          // Phase 2: Run LLM-First indexing with full context
+          await runLLMFirstIndexing(targetPath, ingestResult.content, indexOptions.verbose)
+          
           return void 0 // Explicitly return void for Effect.tryPromise
         },
-        catch: (error) => createConfigurationError(error, 'Failed to run guided exploration')
+        catch: (error) => createConfigurationError(error, 'Failed to run LLM-first indexing')
       })
     )
   )

@@ -119,6 +119,8 @@ export const createDatabaseSchema = (db: DatabaseConnection): Effect.Effect<void
         DEFINE FIELD end_line ON code_symbols TYPE number;
         DEFINE FIELD content_hash ON code_symbols TYPE string;
         DEFINE FIELD description ON code_symbols TYPE string;
+        DEFINE FIELD code ON code_symbols TYPE string;
+        DEFINE FIELD lines ON code_symbols TYPE array<number>;
         DEFINE FIELD embedding ON code_symbols TYPE array<float>;
         DEFINE INDEX symbols_path_idx ON code_symbols FIELDS file_path;
         DEFINE INDEX symbols_name_idx ON code_symbols FIELDS symbol_name;
@@ -261,6 +263,8 @@ export const searchCodeSymbols = (
           symbol_name,
           symbol_kind,
           description,
+          code,
+          lines,
           vector::similarity::cosine(embedding, $query_vector) AS similarity,
           start_line,
           end_line
@@ -285,7 +289,9 @@ export const searchCodeSymbols = (
         symbol_name: s.symbol_name,
         symbol_kind: s.symbol_kind,
         start_line: s.start_line,
-        end_line: s.end_line
+        end_line: s.end_line,
+        code: s.code,
+        lines: s.lines
       })) : []
     },
     catch: (error) => createStorageError(error, 'search', 'Failed to search code symbols')

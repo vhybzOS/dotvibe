@@ -116,7 +116,166 @@ const tools = [
 ];
 
 /**
- * Run guided exploration of codebase using hybrid orchestrator
+ * LLM-First Contextual Indexing - Revolutionary Architecture Upgrade
+ * Provides complete codebase context upfront → architectural analysis → systematic component indexing
+ */
+export async function runLLMFirstIndexing(rootPath: string, codebaseDigest: string, verbose: boolean = false): Promise<void> {
+  try {
+    if (verbose) {
+      console.log('💬 LLM Architectural Analysis...')
+    }
+
+    // Check API key
+    const apiKey = Deno.env.get('GOOGLE_API_KEY')
+    if (!apiKey) {
+      throw new Error('GOOGLE_API_KEY environment variable not found')
+    }
+
+    // Initialize Google AI SDK
+    const genAI = new GoogleGenAI({ apiKey })
+    
+    // Enhanced system instruction with full codebase context
+    const llmFirstSystemInstruction = `You are an expert programmer and system architect. I have provided you with the COMPLETE codebase below. 
+
+${codebaseDigest}
+
+Your task is to first provide a detailed architectural summary of this system, then return a JSON list of all components to be indexed.
+
+First response format:
+## Architectural Summary
+[Detailed analysis of system architecture, component relationships, design patterns]
+
+## Components to Index
+\`\`\`json
+[{"filename": "src/index.ts", "components": [{"name": "QueryData", "kind": "interface"}, {"name": "createError", "kind": "function"}]}]
+\`\`\`
+
+After this, I will systematically ask you to describe each component with full architectural context.`
+
+    // Initial request for architectural analysis
+    const analysisResult = await genAI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: "Analyze this codebase and provide the architectural summary and JSON component list as specified.",
+      config: {
+        systemInstruction: llmFirstSystemInstruction
+      }
+    })
+
+    if (verbose) {
+      console.log(`📋 LLM provided architectural analysis (${analysisResult.text?.length || 0} chars)`)
+    }
+
+    // Extract JSON component list from LLM response
+    const componentList = extractComponentListFromResponse(analysisResult.text || '')
+    
+    if (verbose) {
+      console.log(`📋 Extracted ${componentList.length} components for indexing`)
+    }
+
+    // Systematic component indexing with progress tracking
+    await indexComponentsSystematically(componentList, rootPath, verbose)
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    console.error(`❌ LLM-First indexing error: ${errorMessage}`)
+    throw error
+  }
+}
+
+/**
+ * Extract JSON component list from LLM response
+ */
+function extractComponentListFromResponse(response: string): Array<{filename: string, components: Array<{name: string, kind: string}>}> {
+  try {
+    // Look for JSON code block in the response
+    const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/)
+    if (!jsonMatch) {
+      console.warn('⚠️ No JSON component list found in LLM response')
+      return []
+    }
+
+    const jsonText = jsonMatch[1]
+    const componentList = JSON.parse(jsonText)
+    
+    // Validate the structure
+    if (!Array.isArray(componentList)) {
+      throw new Error('Component list is not an array')
+    }
+
+    return componentList
+
+  } catch (error) {
+    console.error('❌ Failed to extract component list from LLM response:', error)
+    return []
+  }
+}
+
+/**
+ * Systematically index components with progress tracking
+ */
+async function indexComponentsSystematically(
+  componentList: Array<{filename: string, components: Array<{name: string, kind: string}>}>, 
+  rootPath: string, 
+  verbose: boolean
+): Promise<void> {
+  // Flatten component list for progress tracking
+  const allComponents = componentList.flatMap(file => 
+    file.components.map(comp => ({
+      filename: file.filename,
+      name: comp.name,
+      kind: comp.kind
+    }))
+  )
+
+  const totalComponents = allComponents.length
+  let indexed = 0
+
+  if (verbose) {
+    console.log(`🔄 Starting systematic indexing of ${totalComponents} components...`)
+  }
+
+  for (const component of allComponents) {
+    try {
+      // Progress tracking with console overwrite
+      indexed++
+      if (verbose) {
+        process.stdout.write(`\r📊 Indexing: ${indexed}/${totalComponents} (${component.name})`)
+      }
+
+      // Get symbol details using existing tools
+      const symbolDetails = await get_symbol_details(component.filename, component.name)
+      
+      // Create index entry with enhanced architectural context
+      const indexResult = await create_index_entry({
+        path: component.filename,
+        symbolName: component.name,
+        symbolKind: component.kind,
+        startLine: symbolDetails.startLine,
+        endLine: symbolDetails.endLine,
+        content: symbolDetails.content,
+        synthesizedDescription: `${component.name} (${component.kind}): Architectural component from LLM-first analysis of complete system context.`
+      })
+
+      if (verbose && !indexResult.success) {
+        console.log(`\n⚠️ Failed to index ${component.name}`)
+      }
+
+    } catch (error) {
+      if (verbose) {
+        console.log(`\n❌ Error indexing ${component.name}: ${error}`)
+      }
+    }
+  }
+
+  if (verbose) {
+    process.stdout.write(`\n✅ Indexing complete - ${indexed} components stored\n`)
+  } else {
+    console.log(`✅ Indexing complete - ${indexed} components stored`)
+  }
+}
+
+/**
+ * Run guided exploration of codebase using hybrid orchestrator (Legacy)
  */
 export async function runGuidedExploration(rootPath: string, verbose: boolean = false): Promise<void> {
   try {
@@ -165,10 +324,13 @@ export async function runGuidedExploration(rootPath: string, verbose: boolean = 
         systemInstruction: systemInstruction
       }
     }
-    let currentMessage = `Begin by exploring the codebase at '${rootPath}'.`
+    // Maintain conversation history for context
+    const conversationHistory = [
+      `Begin by exploring the codebase at '${rootPath}'.`
+    ]
     
     if (verbose) {
-      console.log(`💬 Sending initial message: "${currentMessage}"`)
+      console.log(`💬 Starting conversation with: "${conversationHistory[0]}"`)
     }
 
     const MAX_ITERATIONS = 20
@@ -179,16 +341,19 @@ export async function runGuidedExploration(rootPath: string, verbose: boolean = 
       
       if (verbose) {
         console.log(`\n--- Iteration ${iteration}/${MAX_ITERATIONS} ---`)
+        console.log(`💬 Conversation has ${conversationHistory.length} messages`)
+        console.log(`📤 Latest message: "${conversationHistory[conversationHistory.length - 1].slice(0, 150)}${conversationHistory[conversationHistory.length - 1].length > 150 ? '...' : ''}"`)
       }
 
-      // Send message to model using Google AI SDK v1.9.0 API
+      // Send FULL conversation history to maintain context
       const result = await genAI.models.generateContent({
         ...baseConfig,
-        contents: currentMessage
+        contents: conversationHistory.join('\n\n---\n\n')
       })
       
-      // After first message, let the conversation flow naturally
-      currentMessage = "Continue with your exploration."
+      if (verbose && result.text) {
+        console.log(`💬 LLM Response: "${result.text.slice(0, 200)}${result.text.length > 200 ? '...' : ''}"`)
+      }
       
       const functionCalls = result.functionCalls
 
@@ -239,6 +404,14 @@ export async function runGuidedExploration(rootPath: string, verbose: boolean = 
           
           if (verbose) {
             console.log(`✅ Tool executed successfully: ${toolName}`)
+            // Show result preview for key operations
+            if (toolName === 'list_symbols_in_file' && Array.isArray(toolResult)) {
+              console.log(`📋 Found symbols: ${JSON.stringify(toolResult.map(s => `${s.name} (${s.kind})`), null, 2)}`)
+            } else if (toolName === 'create_index_entry') {
+              console.log(`💾 Indexed: ${args.symbolName} (${args.symbolKind})`)
+            } else if (toolName === 'list_filesystem' && Array.isArray(toolResult)) {
+              console.log(`📁 Found ${toolResult.length} items: [${toolResult.slice(0, 3).join(', ')}${toolResult.length > 3 ? '...' : ''}]`)
+            }
           }
           
         } catch (error) {
@@ -254,18 +427,22 @@ export async function runGuidedExploration(rootPath: string, verbose: boolean = 
         }
       }
 
-      // Send function responses back to model
+      // Add function responses to conversation history
       if (verbose) {
-        console.log(`📤 Sending ${functionResponses.length} function responses back to LLM...`)
+        console.log(`📤 Adding ${functionResponses.length} function responses to conversation history...`)
       }
       
-      // For simplicity in this hybrid approach, format function responses as text
-      // TODO_MASTRA_UPGRADE: Use proper function response format when upgrading to Mastra
+      // Format function responses and add to conversation
       const responseText = functionResponses.map(fr => 
         `Function ${fr.name} result: ${JSON.stringify(fr.response)}`
       ).join('\n')
       
-      currentMessage = `Here are the function results:\n${responseText}\n\nBased on these results, please continue your exploration.`
+      const nextMessage = `Here are the function results:\n${responseText}\n\nBased on these results, please continue your exploration.`
+      conversationHistory.push(nextMessage)
+      
+      if (verbose) {
+        console.log(`💾 Conversation history now has ${conversationHistory.length} messages (${conversationHistory.join('').length} chars total)`)
+      }
     }
 
     if (iteration >= MAX_ITERATIONS) {

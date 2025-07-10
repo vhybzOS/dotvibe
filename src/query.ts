@@ -22,7 +22,13 @@ export const QueryResultSchema = z.object({
   similarity: z.number(),
   relevanceScore: z.number(),
   filePath: z.string(),
-  createdAt: z.string()
+  createdAt: z.string(),
+  symbolName: z.string().optional(),
+  symbolKind: z.string().optional(),
+  startLine: z.number().optional(),
+  endLine: z.number().optional(),
+  code: z.string().optional(),
+  lines: z.array(z.number()).optional()
 })
 
 export const QueryResponseSchema = z.object({
@@ -148,7 +154,13 @@ export const searchCode = (
           similarity: result.similarity,
           relevanceScore,
           filePath: result.file_path,
-          createdAt: result.created_at
+          createdAt: result.created_at,
+          symbolName: result.symbol_name,
+          symbolKind: result.symbol_kind,
+          startLine: result.start_line,
+          endLine: result.end_line,
+          code: result.code,
+          lines: result.lines
         }
       })
     )
@@ -195,21 +207,52 @@ export const formatQueryResults = (response: QueryResponse): string => {
   }
   
   response.results.forEach((result, index) => {
-    lines.push(`## Result ${index + 1} - ${result.filePath}`)
+    // Enhanced header with line number range
+    const lineRange = result.lines && result.lines.length >= 2 
+      ? `:${result.lines[0]}-${result.lines[1]}`
+      : result.startLine && result.endLine 
+        ? `:${result.startLine}-${result.endLine}` 
+        : ''
+    
+    lines.push(`## Result ${index + 1} - ${result.filePath}${lineRange}`)
     lines.push(`**Relevance:** ${result.relevanceScore.toFixed(1)}% | **Similarity:** ${(result.similarity * 100).toFixed(1)}%`)
+    
+    // Show component info if available
+    if (result.symbolName && result.symbolKind) {
+      lines.push(`**Component:** ${result.symbolName} (${result.symbolKind})`)
+    }
     lines.push('')
     
-    // Extract and display code snippets
-    const snippets = extractCodeSnippets(result.text, 15)
-    if (snippets.length > 0) {
+    // Display actual code block with line numbers
+    if (result.code && result.lines && result.lines.length >= 2) {
       lines.push('```typescript')
-      lines.push(snippets[0]!) // Show first snippet
+      const codeLines = result.code.split('\n')
+      const startLine = result.lines[0]
+      codeLines.forEach((codeLine, idx) => {
+        const lineNumber = startLine + idx
+        lines.push(`${lineNumber}: ${codeLine}`)
+      })
       lines.push('```')
     } else {
-      lines.push('```')
-      lines.push(result.text.split('\n').slice(0, 10).join('\n'))
-      lines.push('```')
+      // Fallback to old format if new fields are not available
+      const snippets = extractCodeSnippets(result.text, 15)
+      if (snippets.length > 0) {
+        lines.push('```typescript')
+        lines.push(snippets[0]!) // Show first snippet
+        lines.push('```')
+      } else {
+        lines.push('```')
+        lines.push(result.text.split('\n').slice(0, 10).join('\n'))
+        lines.push('```')
+      }
     }
+    
+    // Show architectural description
+    if (result.text && result.text !== `${result.symbolName} (${result.symbolKind}): ${result.text}`) {
+      lines.push('')
+      lines.push(`**Description:** ${result.text.replace(`${result.symbolName} (${result.symbolKind}): `, '')}`)
+    }
+    
     lines.push('')
   })
   
