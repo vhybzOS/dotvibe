@@ -49,9 +49,27 @@ export type DatabaseConnection = Surreal
  * Simple database connection for toolbox usage
  */
 export async function connectToDatabase(): Promise<DatabaseConnection> {
+  // Get dynamic server configuration
+  let serverConfig
+  try {
+    const pidFileContent = await Deno.readTextFile('.vibe/server.pid')
+    const pidInfo = JSON.parse(pidFileContent)
+    serverConfig = {
+      host: pidInfo.host,
+      port: pidInfo.port,
+      username: 'root',
+      password: 'root'
+    }
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      throw new Error('SurrealDB server not running. Please run "./vibe start" first.')
+    }
+    throw error
+  }
+  
   const db = new Surreal()
-  await db.connect('http://127.0.0.1:4243/rpc')
-  await db.signin({ username: 'root', password: 'root' })
+  await db.connect(`http://${serverConfig.host}:${serverConfig.port}/rpc`)
+  await db.signin({ username: serverConfig.username, password: serverConfig.password })
   await db.use({ namespace: 'vibe', database: 'code' })
   return db
 }
