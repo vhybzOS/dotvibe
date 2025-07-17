@@ -11,7 +11,7 @@
 import { GoogleGenAI, FunctionCallingConfigMode, type FunctionDeclaration } from '@google/genai'
 import { Effect, pipe } from 'effect'
 import type { VibeError } from '../index.ts'
-import { createConfigurationError } from '../core/errors.ts'
+import { createConfigurationError } from '../infra/errors.ts'
 import type { 
   AgentConfig,
   TokenEstimate,

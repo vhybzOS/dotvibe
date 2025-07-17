@@ -1,8 +1,8 @@
 /**
  * Enhanced AST Analyzer - Relationship Discovery & Data Flow Analysis
  * 
- * Builds upon src/infra/ast.ts to provide relationship discovery, data flow analysis,
- * and block detection for the graph database architecture.
+ * Builds upon src/infra/ast.ts to provide relationship discovery and data flow analysis
+ * for the graph database architecture.
  * 
  * @tests tests/core/ast-analyzer.test.ts (AST parsing, relationships, data flow)
  */
@@ -247,7 +247,6 @@ export interface FileParseResult {
   elements: CodeElementData[]
   relationships: RelationshipData[]
   dataFlows: DataFlowRelationshipData[]
-  blocks: BlockStructure[]
   processingTime: number
   errors: string[]
 }
@@ -302,18 +301,6 @@ export interface DataFlowRelationshipData {
   side_effects?: string[]
 }
 
-/**
- * Block structure for human-readable organization
- */
-export interface BlockStructure {
-  name: string
-  type: 'module' | 'class' | 'function' | 'conditional' | 'loop' | 'try_catch'
-  start_line: number
-  end_line: number
-  children: BlockStructure[]
-  description?: string
-  complexity_score?: number
-}
 
 /**
  * Relationship discovery result
@@ -410,15 +397,11 @@ export const parseFileWithRelationships = (
       // Analyze data flow
       const dataFlows = await analyzeDataFlowSync(parseResult)
       
-      // Detect blocks
-      const blocks = await detectBlocksSync(content, tree)
-      
       return {
         filePath: absolutePath,
         elements,
         relationships,
         dataFlows,
-        blocks,
         processingTime: Date.now() - startTime,
         errors: []
       } satisfies FileParseResult
@@ -428,7 +411,6 @@ export const parseFileWithRelationships = (
       elements: [],
       relationships: [],
       dataFlows: [],
-      blocks: [],
       processingTime: Date.now() - startTime,
       errors: [error instanceof Error ? error.message : String(error)]
     } satisfies FileParseResult))
@@ -469,25 +451,6 @@ export const analyzeDataFlow = (
   })
 }
 
-/**
- * Detect blocks from content
- */
-export const detectBlocks = (
-  content: string,
-  language: string = 'typescript'
-): Effect.Effect<BlockStructure[], VibeError> => {
-  return pipe(
-    withTreeSitterParser(language, async (parser) => {
-      const tree = parser.parse(content)
-      
-      if (!tree) {
-        throw new Error('Failed to parse content - tree is null')
-      }
-      
-      return await detectBlocksSync(content, tree)
-    })
-  )
-}
 
 /**
  * Extract elements from AST tree
@@ -669,6 +632,14 @@ const extractElementName = (node: any): string | null => {
       return extractMemberName(node)
     case 'assignment_expression':
       return extractAssignmentName(node)
+    case 'lexical_declaration':
+    case 'variable_declaration':
+      // For variable declarations, look for variable_declarator children
+      const declarator = node.namedChildren?.find((child: any) => child.type === 'variable_declarator')
+      if (declarator) {
+        return extractNameFromChildren(declarator)
+      }
+      return extractNameFromChildren(node)
     case 'string':
     case 'template_string':
     case 'number':
@@ -1304,13 +1275,15 @@ const extractTypeRelationship = (
 const isAPICall = (functionName: string): boolean => {
   const apiPatterns = [
     'fetch', 'axios', 'http', 'https',
-    'post', 'get', 'put', 'delete',
-    'query', 'execute', 'connect',
     'readFile', 'writeFile', 'readTextFile',
     'embedContent', 'generateContent'
   ]
   
-  return apiPatterns.some(pattern => functionName.includes(pattern))
+  // Check exact matches or common API prefixes
+  const exactMatches = ['post', 'get', 'put', 'delete', 'query', 'execute', 'connect']
+  
+  return apiPatterns.some(pattern => functionName.includes(pattern)) ||
+         exactMatches.some(exact => functionName === exact || functionName.startsWith(exact + '.'))
 }
 
 /**
@@ -1609,124 +1582,6 @@ const extractReturnFlow = (node: any, parseResult: ParseResult): DataFlowRelatio
   }
 }
 
-/**
- * Synchronous block detection
- */
-const detectBlocksSync = async (content: string, tree: any): Promise<BlockStructure[]> => {
-  const blocks: BlockStructure[] = []
-  
-  const walkNode = (node: any, parent?: BlockStructure) => {
-    const block = extractBlockFromNode(node, content)
-    if (block) {
-      if (parent) {
-        parent.children.push(block)
-      } else {
-        blocks.push(block)
-      }
-      
-      // Recursively find child blocks
-      for (const child of node.children || []) {
-        walkNode(child, block)
-      }
-    } else {
-      // Continue walking even if no block found
-      for (const child of node.children || []) {
-        walkNode(child, parent)
-      }
-    }
-  }
-  
-  walkNode(tree.rootNode)
-  
-  return blocks
-}
-
-/**
- * Extract block from node
- */
-const extractBlockFromNode = (node: any, content: string): BlockStructure | null => {
-  const blockTypes = [
-    'function_declaration',
-    'method_definition',
-    'class_declaration',
-    'if_statement',
-    'for_statement',
-    'while_statement',
-    'try_statement',
-    'switch_statement'
-  ]
-  
-  if (!blockTypes.includes(node.type)) return null
-  
-  const name = extractNameFromChildren(node) || node.type
-  const type = mapNodeTypeToBlockType(node.type)
-  
-  return {
-    name,
-    type,
-    start_line: node.startPosition.row + 1,
-    end_line: node.endPosition.row + 1,
-    children: [],
-    complexity_score: calculateComplexityScore(node, content)
-  }
-}
-
-/**
- * Map node type to block type
- */
-const mapNodeTypeToBlockType = (nodeType: string): BlockStructure['type'] => {
-  const mapping: Record<string, BlockStructure['type']> = {
-    'function_declaration': 'function',
-    'method_definition': 'function',
-    'class_declaration': 'class',
-    'if_statement': 'conditional',
-    'for_statement': 'loop',
-    'while_statement': 'loop',
-    'try_statement': 'try_catch',
-    'switch_statement': 'conditional'
-  }
-  
-  return mapping[nodeType] || 'module'
-}
-
-/**
- * Calculate complexity score for block
- */
-const calculateComplexityScore = (node: any, content: string): number => {
-  let score = 1
-  
-  // Add complexity for nesting
-  const depth = getNodeDepth(node)
-  score += depth * 0.1
-  
-  // Add complexity for control flow
-  const controlFlowPatterns = ['if', 'for', 'while', 'switch', 'try', 'catch']
-  const text = node.text.toLowerCase()
-  
-  for (const pattern of controlFlowPatterns) {
-    const matches = text.match(new RegExp(pattern, 'g'))
-    if (matches) {
-      score += matches.length * 0.2
-    }
-  }
-  
-  return Math.min(score, 10) // Cap at 10
-}
-
-/**
- * Get node depth in AST
- */
-const getNodeDepth = (node: any): number => {
-  let depth = 0
-  let current = node.parent
-  
-  while (current) {
-    depth++
-    current = current.parent
-  }
-  
-  return depth
-}
 
 /**
  * CLI interface for testing
@@ -1742,7 +1597,6 @@ if (import.meta.main) {
     console.log('  parse-file <file>           - Parse file with relationships')
     console.log('  discover-relationships <file> - Discover relationships only')
     console.log('  analyze-data-flow <file>    - Analyze data flow only')
-    console.log('  detect-blocks <file>        - Detect blocks only')
     Deno.exit(1)
   }
   
@@ -1780,11 +1634,6 @@ if (import.meta.main) {
       )
       const dataFlows = await Effect.runPromise(analyzeDataFlow(parseResult2))
       console.log(JSON.stringify(dataFlows, null, 2))
-      break
-      
-    case 'detect-blocks':
-      const blocks = await Effect.runPromise(detectBlocks(content, language))
-      console.log(JSON.stringify(blocks, null, 2))
       break
       
     default:

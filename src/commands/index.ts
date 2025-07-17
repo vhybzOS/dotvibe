@@ -9,7 +9,7 @@ import { z } from 'zod/v4'
 import { createConfigurationError, type VibeError } from '../index.ts'
 import { runLLMFirstIndexing } from '../agent/indexing.ts'
 import { ensureWorkspaceReady } from '../workspace.ts'
-import { setLogLevel, LogLevel, logSystem } from '../core/logger.ts'
+import { setLogLevel, LogLevel, logSystem } from '../infra/logger.ts'
 
 // Index command options schema with logging levels
 export const IndexOptionsSchema = z.object({

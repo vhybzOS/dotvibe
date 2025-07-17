@@ -22,7 +22,7 @@ import {
   logDiscovery, logAnalysis, logProcessing, 
   storeCompletedComponent, displayCompletedComponents, clearCompletedComponents,
   debugOnly 
-} from '../lib/logger.ts'
+} from '../infra/logger.ts'
 import { updateProgressDashboard as progressDashboard, type ProcessingTask } from './progress.ts'
 
 /**

@@ -13,7 +13,7 @@
 import { Effect, pipe } from 'effect'
 import type { ThreadContext, TokenEstimate, ProgressDisplay } from './types.ts'
 import type { VibeError } from '../index.ts'
-import { logProcessing } from '../core/logger.ts'
+import { logProcessing } from '../infra/logger.ts'
 
 /**
  * Task status for indexing operations
