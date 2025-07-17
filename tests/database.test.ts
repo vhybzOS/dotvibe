@@ -16,7 +16,7 @@ import {
   type DatabaseConnection,
   type VectorRecord,
   type FileMetadata
-} from '../src/database.ts'
+} from '../src/infra/storage.ts'
 
 const TEST_DB_PATH = './test-database.db'
 

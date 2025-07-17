@@ -8,14 +8,18 @@ import { describe, it, beforeEach, afterEach } from '@std/testing/bdd'
 import { assertEquals, assertExists, assert } from '@std/assert'
 import { Effect, Either } from 'effect'
 import { 
-  loadEmbeddingConfig,
-  createGeminiClient,
-  generateEmbedding,
-  generateEmbeddings,
-  type EmbeddingConfig,
+  generateSingleEmbedding,
+  generateBatchEmbeddings,
+  validateEmbedding,
+  normalizeEmbedding,
+  EmbeddingUtils,
   type EmbeddingRequest,
-  type EmbeddingResult
-} from '../src/embeddings.ts'
+  type EmbeddingResponse,
+  type BatchEmbeddingRequest,
+  type BatchEmbeddingResponse,
+  type EmbeddingOptions,
+  type EmbeddingValidationResult
+} from '../src/infra/embeddings.ts'
 
 describe('Embedding Generation', () => {
   const originalEnv = Deno.env.toObject()
