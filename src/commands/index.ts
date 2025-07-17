@@ -7,20 +7,21 @@
 import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
 import { createConfigurationError, type VibeError } from '../index.ts'
-import { runLLMFirstIndexing } from '../mastra/agents/indexing_agent.ts'
+import { runLLMFirstIndexing } from '../agent/indexing.ts'
 import { ensureWorkspaceReady } from '../workspace.ts'
-import { ingestPath, defaultConfigs } from '../path-ingest.ts'
+import { setLogLevel, LogLevel, logSystem } from '../core/logger.ts'
 
-// Index command options schema (simplified for Phase 2)
+// Index command options schema with logging levels
 export const IndexOptionsSchema = z.object({
-  verbose: z.boolean().default(false)
+  verbose: z.boolean().default(false),
+  debug: z.boolean().default(false)
 })
 
 export type IndexOptions = z.infer<typeof IndexOptionsSchema>
 
 /**
  * Main index command implementation
- * Uses LLM-First Contextual Indexing: full codebase context → architectural analysis → systematic indexing
+ * Uses LLM-First Indexing: complete codebase context → single LLM analysis → parallel component processing
  */
 export const indexCommand = (
   targetPath: string,
@@ -28,29 +29,30 @@ export const indexCommand = (
 ): Effect.Effect<void, VibeError> => {
   const indexOptions = IndexOptionsSchema.parse(options)
   
+  // Set logging level based on flags
+  if (indexOptions.debug) {
+    setLogLevel(LogLevel.DEBUG)
+  } else if (indexOptions.verbose) {
+    setLogLevel(LogLevel.VERBOSE)
+  } else {
+    setLogLevel(LogLevel.NORMAL)
+  }
+  
   return pipe(
     // Ensure workspace is ready (database server started, etc.)
     ensureWorkspaceReady(),
     Effect.flatMap(() =>
       Effect.tryPromise({
         try: async () => {
-          // Phase 1: Generate complete codebase digest using path-ingest
-          if (indexOptions.verbose) {
-            console.log('🚀 Generating codebase digest...')
-          }
-          
-          const ingestResult = await ingestPath(targetPath, defaultConfigs.typescript)
-          
-          if (indexOptions.verbose) {
-            console.log(`📊 Found ${ingestResult.stats.fileCount} files (${ingestResult.stats.totalLines} lines total)`)
-          }
-          
-          // Phase 2: Run LLM-First indexing with full context
-          await runLLMFirstIndexing(targetPath, ingestResult.content, indexOptions.verbose)
+          // Run LLM-first indexing with new logging system
+          await Effect.runPromise(runLLMFirstIndexing(targetPath, indexOptions.verbose))
           
           return void 0 // Explicitly return void for Effect.tryPromise
         },
-        catch: (error) => createConfigurationError(error, 'Failed to run LLM-first indexing')
+        catch: (error) => {
+          logSystem.error(`Failed to run LLM-first indexing: ${error instanceof Error ? error.message : String(error)}`)
+          return createConfigurationError(error, 'Failed to run LLM-first indexing')
+        }
       })
     )
   )

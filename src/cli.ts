@@ -65,6 +65,7 @@ const handleIndexCommand = async (
     includeMarkdown?: boolean
     maxDepth?: number
     verbose?: boolean
+    debug?: boolean
   }
 ) => {
   if (!targetPath || targetPath.trim().length === 0) {
@@ -74,10 +75,8 @@ const handleIndexCommand = async (
   }
   
   const indexOptions = IndexOptionsSchema.parse({
-    ext: options.ext,
-    includeMarkdown: options.includeMarkdown,
-    maxDepth: options.maxDepth,
-    verbose: options.verbose
+    verbose: options.verbose || false,
+    debug: options.debug || false
   })
   
   const program = pipe(
@@ -320,6 +319,7 @@ const setupCLI = () => {
     .option('--include-markdown', 'Include markdown files in indexing', false)
     .option('--max-depth <number>', 'Maximum directory depth to scan', (value) => parseInt(value), 10)
     .option('-v, --verbose', 'Verbose output with detailed progress', false)
+    .option('--debug', 'Debug output with internal operations (includes verbose)', false)
     .action(handleIndexCommand)
   
   // Query command
@@ -370,7 +370,8 @@ const setupCLI = () => {
       console.log('  --ext .ts,.js             Index specific extensions')
       console.log('  --include-markdown        Include .md files')
       console.log('  --max-depth 5             Limit directory depth')
-      console.log('  -v, --verbose             Show detailed progress\n')
+      console.log('  -v, --verbose             Show detailed progress')
+      console.log('  --debug                   Show internal operations\n')
       console.log('🔍 Query Options:')
       console.log('  -l, --limit 10            Maximum results')
       console.log('  -s, --similarity 0.1      Similarity threshold')
