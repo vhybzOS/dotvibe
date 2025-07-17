@@ -231,7 +231,7 @@ export const stopSurrealServer = (): Effect.Effect<void, VibeError> =>
             console.log('⚠️  Server process not found (may have already stopped)')
           }
         } catch (error) {
-          console.log('⚠️  Failed to stop server process:', error.message)
+          console.log('⚠️  Failed to stop server process:', error instanceof Error ? error.message : String(error))
         }
         
         // Clean up PID file
