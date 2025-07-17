@@ -10,7 +10,7 @@ import { z } from 'zod/v4'
 // Core query types - placeholders for future implementation
 export const QueryDataSchema = z.object({
   text: z.string(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 })
 
 export type QueryData = z.infer<typeof QueryDataSchema>

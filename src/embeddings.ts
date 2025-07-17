@@ -46,7 +46,7 @@ export const loadEmbeddingConfig = (): Effect.Effect<EmbeddingConfig, VibeError>
       
       // First check system environment (already loaded by @std/dotenv/load)
       let apiKey = Deno.env.get('GOOGLE_API_KEY')
-      let model = Deno.env.get('GEMINI_MODEL') || 'text-embedding-004'
+      let model = Deno.env.get('GEMINI_EMBEDDING_MODEL') || Deno.env.get('GEMINI_MODEL') || 'text-embedding-004'
       
       // If not found in system env, try loading from parent directories
       if (!apiKey) {
@@ -61,7 +61,7 @@ export const loadEmbeddingConfig = (): Effect.Effect<EmbeddingConfig, VibeError>
             await Deno.stat(envPath)
             env = await load({ envPath })
             apiKey = env.GOOGLE_API_KEY
-            model = env.GEMINI_MODEL || model
+            model = env.GEMINI_EMBEDDING_MODEL || env.GEMINI_MODEL || model
             if (apiKey) break
           } catch {
             // Continue to next path

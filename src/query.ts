@@ -28,7 +28,8 @@ export const QueryResultSchema = z.object({
   startLine: z.number().optional(),
   endLine: z.number().optional(),
   code: z.string().optional(),
-  lines: z.array(z.number()).optional()
+  lines: z.array(z.number()).optional(),
+  search_phrases: z.array(z.string()).optional()
 })
 
 export const QueryResponseSchema = z.object({
@@ -74,17 +75,18 @@ export const extractCodeSnippets = (text: string, maxLines: number = 10): string
 }
 
 /**
- * Calculate relevance score based on similarity and keyword matching
+ * Calculate relevance score based on similarity, keyword matching, and search phrases
  */
 export const calculateRelevanceScore = (
   similarity: number,
   queryText: string,
-  resultText: string
+  resultText: string,
+  searchPhrases: string[] = []
 ): number => {
   // Base score from similarity (0-100)
   let score = similarity * 100
   
-  // Boost for keyword matches
+  // Boost for keyword matches in description
   const queryWords = queryText.toLowerCase().split(/\s+/)
   const resultWords = resultText.toLowerCase()
   
@@ -94,6 +96,17 @@ export const calculateRelevanceScore = (
   
   const keywordBoost = (keywordMatches / queryWords.length) * 20
   score += keywordBoost
+  
+  // NEW: Boost for search phrase matches
+  const searchPhraseMatches = searchPhrases.filter(phrase => 
+    queryWords.some(word => phrase.toLowerCase().includes(word)) ||
+    phrase.toLowerCase().includes(queryText.toLowerCase())
+  ).length
+  
+  if (searchPhrases.length > 0) {
+    const searchPhraseBoost = (searchPhraseMatches / searchPhrases.length) * 30
+    score += searchPhraseBoost
+  }
   
   // Boost for code-specific patterns
   if (queryText.toLowerCase().includes('async') && resultText.includes('async')) {
@@ -146,7 +159,8 @@ export const searchCode = (
         const relevanceScore = calculateRelevanceScore(
           result.similarity,
           queryText,
-          result.content
+          result.content,
+          result.search_phrases
         )
         
         return {
@@ -160,7 +174,8 @@ export const searchCode = (
           startLine: result.start_line,
           endLine: result.end_line,
           code: result.code,
-          lines: result.lines
+          lines: result.lines,
+          search_phrases: result.search_phrases
         }
       })
     )
@@ -251,6 +266,12 @@ export const formatQueryResults = (response: QueryResponse): string => {
     if (result.text && result.text !== `${result.symbolName} (${result.symbolKind}): ${result.text}`) {
       lines.push('')
       lines.push(`**Description:** ${result.text.replace(`${result.symbolName} (${result.symbolKind}): `, '')}`)
+    }
+    
+    // NEW: Show search phrases if available
+    if (result.search_phrases && result.search_phrases.length > 0) {
+      lines.push('')
+      lines.push(`**Search Terms:** ${result.search_phrases.join(', ')}`)
     }
     
     lines.push('')
