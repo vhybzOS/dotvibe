@@ -1,0 +1,12 @@
+# Global code owners
+* @keyvan
+
+# Infrastructure and core modules
+src/infra/ @keyvan
+src/agent/ @keyvan  
+src/commands/ @keyvan
+
+# Configuration and workflows
+.github/ @keyvan
+deno.json @keyvan
+CLAUDE.md @keyvan

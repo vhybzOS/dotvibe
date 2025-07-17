@@ -1,0 +1,35 @@
+name: Claude Code Assistant
+
+on:
+  issue_comment:
+    types: [created, edited]
+  pull_request_review_comment:
+    types: [created, edited]
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  claude-response:
+    if: contains(github.event.comment.body, '@claude') || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Claude Code Action
+        uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Optional configuration
+          trigger_phrase: "@claude"
+          model: "claude-3-5-sonnet-20241022"
+          max_turns: 5
+          allowed_tools: "bash,read_file,write_file,str_replace_editor"
