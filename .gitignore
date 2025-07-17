@@ -70,5 +70,7 @@ yarn-error.log*
 # Dotvibe
 .vibe/
 
-# Mastra
+# Library repo clones
 mastra/
+code2prompt/
+js-genai/
