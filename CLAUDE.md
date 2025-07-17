@@ -1,233 +1,190 @@
-# dotvibe - Toolbox for Coding Agents
+# dotvibe - Development Guidelines
 
 ## 🎯 Project Overview
 
 **dotvibe** is a toolbox for coding agents, providing them with superpowers through a collection of useful CLI tools. Our mission is to build practical utilities that enhance developer productivity and enable powerful agent workflows.
 
-**First Tool**: `vibe query` - A context-aware code search that returns precise code snippets instead of loading entire files. Get 10 relevant lines instead of 1000-line files via intelligent pattern matching.
+**Core Tool**: `vibe query` - A context-aware code search that returns precise code snippets instead of loading entire files.
 
-## 🔄 Core Protocols
+## 🏗️ Architecture
 
-### Protocol 1: Requirement Acquisition
+### Current Architecture
+- **src/infra/**: Consolidated primitives (config, storage, embeddings, errors, AST, logger)
+- **src/agent/**: Clean agent system with composable primitives
+- **src/commands/**: CLI entry points (init, index, query)
+- **tests/**: Comprehensive test suite with @tested_by annotations
 
-**File: `prd.md`** - Product Requirements Document
+### Architecture Principles
+- ✅ **No duplicate implementations** (single source of truth)
+- ✅ **Composable primitives** (focused modules that can be combined)
+- ✅ **Clean module boundaries** (single responsibility principle)
+- ✅ **Comprehensive test coverage** (100% @tested_by annotations)
 
-**Purpose**: Structured requirement gathering and feature planning with user interaction.
-
-**Workflow**:
-1. **User Request**: User describes desired feature or improvement
-2. **Requirement Extraction**: Break down request into structured requirements
-3. **Back-and-forth Refinement**: Clarify requirements until implementation-ready
-4. **Status Tracking**: planned → in-progress → completed
-
-**Format**:
-```markdown
-## Feature: [Feature Name]
-**Status**: [planned|in-progress|completed]
-**Priority**: [high|medium|low]
-**Created**: [timestamp]
-
-### Description
-[Clear description of what needs to be implemented]
-
-### Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
-
-### Implementation Notes
-[Technical approach, dependencies, considerations]
-
-### User Stories
-- As a [user], I want [functionality] so that [benefit]
-```
-
-### Protocol 2: Test Management
-
-**File: `tests.md`** - Test Tracking Document
-
-**Purpose**: Track test cases and @tested_by system for comprehensive coverage.
-
-**Workflow**:
-1. **Test Planning**: Map requirements from prd.md to test cases
-2. **Test Implementation**: Create actual test files with @tested_by annotations
-3. **Test Execution**: Track pass/fail status and coverage metrics
-4. **Test Lifecycle**: created → implemented → passing → archived
-
-**Format**:
-```markdown
-## Test: [Test Name]
-**Status**: [created|implemented|passing|failing|archived]
-**Priority**: [high|medium|low]
-**Related Feature**: [Link to prd.md feature]
-
-### Test Cases
-- [ ] Test case 1
-- [ ] Test case 2
-- [ ] Test case 3
-
-### @tested_by Coverage
+### Composable Primitives Pattern
 ```typescript
-/**
- * @tested_by tests/query.test.ts (Natural language processing, context compression)
- * @tested_by tests/integration.test.ts (End-to-end query workflow)
- */
+// Use composable functions for different use cases
+import { createLLMClient } from './llm.ts'
+import { createProgressTracker } from './progress.ts'  
+import { createWindowingStrategy } from './windowing.ts'
+
+// Components can be combined as needed
+const client = createLLMClient(config)
+const progress = createProgressTracker(context)
+const windowing = createWindowingStrategy('per-file', maxTokens)
+
+// Benefits:
+// - Cleaner module boundaries (single responsibility)
+// - Easier testing (each module focused)
+// - Flexible composition for different use cases
+// - Reduced cognitive load
 ```
 
-### Coverage Metrics
-- Unit tests: [N/total]
-- Integration tests: [N/total]
-- Coverage percentage: [X%]
-```
+## 🔧 Core Development Principles
 
-### Protocol 3: Feature Lifecycle Management
-
-**Purpose**: Manage features from conception to completion with structured progression.
-
-**Lifecycle States**:
-1. **Planned**: Feature exists in prd.md with clear requirements
-2. **In Progress**: Active development with tests.md tracking
-3. **Completed**: Feature implemented, tests passing, ready for flush
-4. **Released**: Feature flushed to CHANGELOG.md
-
-**Commit Integration**:
-- Structured commit messages referencing prd.md features
-- Automatic status updates based on commit content
-- Semantic versioning based on commit analysis
-- Automatic version tagging for releases
-
-**Semantic Versioning Rules**:
-- **PATCH** (0.0.X): Bug fixes, minor improvements, documentation updates
-- **MINOR** (0.X.0): New features, enhancements, backwards-compatible changes
-- **MAJOR** (X.0.0): Breaking changes, API changes, architectural rewrites
-
-**Commit Message Analysis**:
-- `feat:` → MINOR version bump
-- `fix:` → PATCH version bump
-- `feat!:` or `BREAKING CHANGE:` → MAJOR version bump
-- `docs:`, `test:`, `refactor:` → PATCH version bump
-
-**Automated Release Workflow**:
-1. Complete feature implementation
-2. Verify all tests passing
-3. **Auto-analyze commits** to determine version bump type
-4. **Auto-update deno.json** with new version
-5. Execute flush protocol with version information
-6. **Auto-create git tag** with semantic version
-7. **Auto-generate release notes** from changelog
-
-### Protocol 4: Flush System (Multi-Stage Cleanup)
-
-**Purpose**: Systematic cleanup and archival after feature completion.
-
-**Stage 1 - Architecture Documentation**:
-- **Update ARCHITECTURE.md** with any new components, patterns, or technical decisions
-- Document new file structure changes and implementation details
-- Update component diagrams and data flow examples
-- Ensure all new technical patterns are captured for future reference
-
-**Stage 2 - Test Completion**:
-- Delete completed test entries from tests.md
-- Archive test files that are no longer needed
-- Preserve @tested_by annotations in source code
-
-**Stage 3 - Feature Completion**:
-- Remove implemented features from prd.md
-- Archive implementation notes and user stories
-- Update feature status to completed
-
-**Stage 4 - Automatic Versioning**:
-- **Analyze git commits** since last release using conventional commit format
-- **Calculate version bump** based on commit types (feat/fix/BREAKING CHANGE)
-- **Update deno.json** with new semantic version
-- **Create git tag** with new version (e.g., v1.2.3)
-
-**Stage 5 - CHANGELOG.md Generation**:
-- Create timestamped summary of completed features
-- Generate bullet points for each implemented feature
-- Include **auto-calculated version number** and release date
-- **Group changes by type** (Added/Fixed/Changed/Removed)
-
-**Stage 6 - System Cleanup**:
-- **Add new entry to top of CHANGELOG.md** (preserving all previous history)
-- Reset prd.md and tests.md for next development cycle
-- **Commit version bump** with message: `chore: release v{version}`
-- **Push git tag** to trigger release automation
-
-**CHANGELOG.md Format** (Auto-generated):
-```markdown
-# Changelog
-
-## [1.2.3] - 2024-01-15
-
-### Added
-- Feature 1: Natural language query processing (feat: add query parser)
-- Feature 2: Context compression algorithm (feat: implement compression)
-
-### Fixed
-- Bug fix: Memory leak in pattern matching (fix: resolve memory leak)
-- Bug fix: CLI argument parsing edge case (fix: handle empty args)
-
-### Changed
-- Enhancement: Improved error messages (feat: better error handling)
-
-### Technical
-- Implemented Effect-TS async patterns
-- Added Zod v4 schema validation
-- Created tagged union error system
-
-### Metrics
-- 100x context compression achieved
-- 95% test coverage maintained
-- 0 memory leaks detected
-
-**Release Notes**: Auto-generated from 5 commits (3 features, 2 fixes)
-**Version Bump**: MINOR (1.2.2 → 1.2.3) - New features added
-```
-
-## 🔧 Development Guidelines
-
-### LLM Model Configurations
-- **Google AI Model**: Always use `gemini-2.5-flash` for @google/genai LLM operations
-
-### Google AI SDK v1.9.0 Integration Patterns (Revolutionary Discovery)
-
-**Critical Upgrade**: Successfully integrated Google AI SDK v1.9.0 with function calling capabilities using proper API patterns.
-
-#### Core Import Pattern
+### 1. Functional Programming (NO Classes)
 ```typescript
-import { GoogleGenAI, FunctionCallingConfigMode, type FunctionDeclaration, Type } from '@google/genai'
-```
+// ❌ Don't create custom classes
+export class TokenTracker { ... }
 
-#### Client Initialization
-```typescript
-const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY })
-```
-
-#### Function Declaration Structure (Production Tested)
-```typescript
-const toolDeclaration: FunctionDeclaration = {
-  name: 'tool_name',
-  parameters: {
-    type: Type.OBJECT,
-    description: 'Tool description',
-    properties: {
-      param1: {
-        type: Type.STRING,
-        description: 'Parameter description'
-      },
-      param2: {
-        type: Type.NUMBER,
-        description: 'Number parameter'
-      }
+// ✅ Use functional patterns with higher-order functions
+export const createTokenTracker = (context: ThreadContext) => {
+  let state = { currentTokens: context.currentTokens }
+  
+  return {
+    addTokens: (tokens: TokenEstimate) => {
+      state.currentTokens += tokens.totalTokens
+      return state.currentTokens
     },
-    required: ['param1']
+    getProgress: () => formatProgress(state.currentTokens, context.maxTokens)
+  }
+}
+
+// ✅ Use function composition with Effect-TS
+export const processTokens = (
+  context: ThreadContext,
+  estimate: TokenEstimate
+): Effect.Effect<ProgressDisplay, VibeError> => pipe(
+  Effect.succeed(context),
+  Effect.map(ctx => addTokensToContext(ctx, estimate)),
+  Effect.map(updated => createProgressDisplay(updated))
+)
+```
+
+**Key Rules**:
+- **Only TypeScript interfaces, function composition, and higher-order functions**
+- **Use Effect-TS for async operations and error handling**
+- **When state is needed, use HOF that return objects with methods**
+- **No classes whatsoever - functional patterns only**
+
+### 2. Effect-TS Patterns (KISS Principle)
+```typescript
+// ✅ Use Effect for:
+// - Async operations with error handling
+// - Resource management (db connections)
+// - Complex composition chains
+
+// ❌ Don't use Effect for:
+// - Simple async/await
+// - Synchronous transformations
+// - Test utilities
+
+// ✅ All async operations MUST use Effect.tryPromise
+Effect.tryPromise({
+  try: () => fileExists(path),
+  catch: (error) => createFileSystemError(error, path, 'Failed to check file')
+})
+
+// ✅ Error handling with tagged unions
+export type VibeError = 
+  | StorageError 
+  | ConfigError 
+  | ProcessingError 
+  | NetworkError
+
+export const handleError = (error: VibeError): void => {
+  switch (error._tag) {
+    case 'StorageError':
+      logger.error(`Storage: ${error.operation} failed`, error)
+      break
+    case 'ConfigError':
+      logger.error(`Config: ${error.field} invalid`, error)
+      break
+    case 'ProcessingError':
+      logger.error(`Processing: ${error.stage} failed`, error)
+      break
+    case 'NetworkError':
+      logger.error(`Network: ${error.url} unreachable`, error)
+      break
   }
 }
 ```
 
-#### Function Calling API Pattern (Verified Working)
+### 3. Module Organization
 ```typescript
+// ✅ Import from core modules
+import { withDatabase } from '../core/storage.ts'
+import { createConfig } from '../core/config.ts'
+import { createFileSystemError } from '../core/errors.ts'
+
+// ✅ Use composable agent primitives
+import { createLLMClient } from '../agent/llm.ts'
+import { createProgressTracker } from '../agent/progress.ts'
+import { createWindowingStrategy } from '../agent/windowing.ts'
+```
+
+### 4. Testing Strategy (TDD Philosophy)
+```typescript
+// 🚨 Core Principle: "Write tests first, then implement to pass tests"
+// This ensures every feature is completely validated before release
+
+// ✅ All functions must have @tested_by annotations
+/**
+ * @tested_by tests/core/storage.test.ts (Database operations, error handling)
+ * @tested_by tests/integration/query.test.ts (End-to-end query workflow)
+ */
+export const executeQuery = (queryText: string): Effect.Effect<QueryResult, VibeError> => {
+  // Implementation
+}
+
+// ✅ Test Coverage Requirements:
+// - Maintain 100% @tested_by annotations
+// - All tests run in <10 seconds
+// - 0 flaky tests
+// - Clear test structure matching architecture
+// - Red-Green-Refactor cycle (fail, pass, improve)
+
+// ✅ Test Types:
+// - Unit tests for individual functions
+// - Integration tests for module interactions
+// - End-to-end tests for full workflows
+```
+
+## 🚀 Technology Stack
+
+### Core Dependencies
+- **Runtime**: Deno (TypeScript-first, no Node.js dependencies)
+- **Functional**: Effect-TS (async operations, error handling)
+- **Validation**: Zod v4 (schema validation, JSON schema generation)
+- **Database**: SurrealDB (unified storage with code_symbols table)
+- **LLM**: Google AI SDK v1.9.0 (`gemini-2.5-flash`)
+- **Parsing**: Tree-sitter (AST parsing for code indexing)
+
+### Architecture Philosophy
+- **Functional Programming**: No classes, only functions and HOF
+- **Composable Primitives**: Small, focused modules that can be combined
+- **Effect-TS Composition**: Functional error handling and async operations
+- **Type Safety**: Zod v4 schemas for runtime validation
+- **Test-Driven Development**: Tests written before implementation
+
+### Integration Patterns
+
+#### Google AI SDK v1.9.0 (Production-Tested)
+```typescript
+import { GoogleGenAI, FunctionCallingConfigMode, type FunctionDeclaration, Type } from '@google/genai'
+
+const genAI = new GoogleGenAI({ apiKey: config.apiKey })
+
+// Function calling with Zod v4 schemas
 const response = await genAI.models.generateContent({
   model: 'gemini-2.5-flash',
   contents: 'Your message to the model',
@@ -238,50 +195,17 @@ const response = await genAI.models.generateContent({
         allowedFunctionNames: ['tool_name']
       }
     },
-    tools: [{
-      functionDeclarations: [toolDeclaration]
-    }],
+    tools: [{ functionDeclarations: [toolDeclaration] }],
     systemInstruction: 'Your system instruction'
   }
 })
 ```
 
-#### Function Call Response Handling
+#### Zod v4 Schema Bridge
 ```typescript
-if (response.functionCalls && response.functionCalls.length > 0) {
-  for (const functionCall of response.functionCalls) {
-    const toolName = functionCall.name
-    const args = functionCall.args || {}
-    
-    // Execute the actual function
-    const result = await executeFunction(toolName, args)
-    
-    // Send result back in next conversation turn
-  }
-}
-```
-
-#### Multi-Turn Conversation Pattern
-```typescript
-// For hybrid approach, format function responses as text for next turn
-const responseText = functionResponses.map(fr => 
-  `Function ${fr.name} result: ${JSON.stringify(fr.response)}`
-).join('\n')
-
-const nextMessage = `Here are the function results:\n${responseText}\n\nBased on these results, please continue.`
-
-// Send nextMessage in subsequent generateContent call
-```
-
-#### Zod v4 Schema Bridge (Production Ready)
-```typescript
-export function zodToFunctionDeclaration(
-  toolDef: ToolDefinition
-): FunctionDeclaration {
-  // Use Zod v4's native JSON schema generation
+// ✅ Use Zod v4's native JSON schema generation
+export function zodToFunctionDeclaration(toolDef: ToolDefinition): FunctionDeclaration {
   const jsonSchema = z.toJSONSchema(toolDef.inputSchema)
-  
-  // Strip the $schema property for Gemini API compatibility
   const { $schema, ...cleanParameters } = jsonSchema
   
   return {
@@ -292,121 +216,16 @@ export function zodToFunctionDeclaration(
 }
 ```
 
-#### Key Learnings from Implementation
-
-1. **Response Structure**: `response.functionCalls` is an array of function call objects
-2. **Function Call Format**: Each call has `name` and `args` properties
-3. **Configuration Pattern**: Uses `toolConfig.functionCallingConfig` for control
-4. **Mode Options**: `FunctionCallingConfigMode.ANY` forces function calling
-5. **Multi-Turn**: Stateless - need to manually format responses for continuation
-6. **Schema Bridge**: Zod v4 `z.toJSONSchema()` works perfectly with Gemini API
-
-#### Production Benefits Realized
-- **Zero External Dependencies**: No `zod-to-json-schema` package needed  
-- **Perfect API Compatibility**: Generates exact format required by Google AI SDK
-- **Schema Validation + Function Calling**: Single source of truth for both validation and LLM tools
-- **Automatic Description Propagation**: `.describe()` methods flow through to API
-- **Type Safety**: Full TypeScript inference maintained throughout conversion
-
-#### Verified Working Integration
-✅ Client initialization with API key
-✅ Function declaration with Zod v4 schemas
-✅ generateContent with function calling configuration  
-✅ Function call response parsing and execution
-✅ Multi-turn conversation with function results
-
-### Tree-sitter + Deno Integration Patterns (Missing Documentation Finally Revealed!)
-
-**Critical Discovery**: The missing documentation for getting tree-sitter to work with Deno + TypeScript parsing.
-
-#### The Problem: Module Resolution Nightmare
-Most tree-sitter documentation assumes Node.js environments and doesn't cover the web-tree-sitter + tree-sitter-typescript integration complexity in Deno.
-
-**Common failures**:
-```typescript
-// ❌ These patterns from docs don't work in Deno
-import TreeSitter from 'tree-sitter-typescript'  // Module not found
-import * as TreeSitter from 'tree-sitter-typescript'  // Wrong exports
-parser.setLanguage(TreeSitter.typescript)  // "Argument must be a Language"
-parser.setLanguage(TreeSitter.typescript.language)  // Still fails
-```
-
-#### Investigation Process: Cache Directory Analysis
-**The key breakthrough**: Examining actual cached modules instead of relying on documentation.
-
-**Cache inspection revealed**:
-```bash
-# Tree-sitter-typescript module structure
-/home/keyvan/.cache/deno/npm/registry.npmjs.org/tree-sitter-typescript/0.23.2/
-├── bindings/node/index.js  # Module exports
-├── tree-sitter-typescript.wasm  # THE CRUCIAL FILE
-└── tree-sitter-tsx.wasm
-```
-
-**Module exports analysis**:
-```typescript
-// From bindings/node/index.d.ts
-type Language = {
-  name: string;
-  language: unknown;  // The actual Language object
-  nodeTypeInfo: NodeInfo[];
-};
-
-declare const typescript: Language;
-declare const tsx: Language;
-export = {typescript, tsx}
-```
-
-#### The Solution: Direct WASM Loading
-
-**Root cause**: The `tree-sitter-typescript` module exports objects with `.language` properties, but web-tree-sitter's `setLanguage()` method needs actual Language objects that must be loaded from WASM files.
-
-**Working pattern discovered**:
+#### Tree-sitter + Deno Integration
 ```typescript
 import { Parser, Language } from 'web-tree-sitter'
 
 async function initializeParser(): Promise<Parser> {
-  // 1. Initialize web-tree-sitter
   await Parser.init()
   const parser = new Parser()
   
-  // 2. Load language from WASM file directly (THE SOLUTION)
-  const wasmPath = '/home/keyvan/.cache/deno/npm/registry.npmjs.org/tree-sitter-typescript/0.23.2/tree-sitter-typescript.wasm'
-  const wasmBytes = await Deno.readFile(wasmPath)
-  const language = await Language.load(wasmBytes)
-  
-  // 3. Set language on parser
-  parser.setLanguage(language)
-  
-  return parser
-}
-```
-
-#### Why This Works: Technical Deep Dive
-
-1. **Web-tree-sitter Architecture**: Designed for browser environments where WASM files are loaded separately
-2. **Deno Environment**: No automatic WASM loading like Node.js addons
-3. **Module Exports**: The `tree-sitter-typescript` package exports metadata objects, not Language instances
-4. **Language.load()**: Static method that creates proper Language objects from WASM bytes
-
-#### Production Implementation Pattern
-
-**File**: `src/mastra/tools/code_analysis_tools.ts:34-47`
-
-```typescript
-import { Parser, Language } from 'web-tree-sitter'
-
-// Global parser instance (singleton pattern)
-let parser: Parser | null = null
-
-async function initializeParser(): Promise<Parser> {
-  if (parser) return parser
-  
-  await Parser.init()
-  parser = new Parser()
-  
   // Direct WASM loading - the only reliable approach for Deno
-  const wasmPath = '/home/keyvan/.cache/deno/npm/registry.npmjs.org/tree-sitter-typescript/0.23.2/tree-sitter-typescript.wasm'
+  const wasmPath = await resolveWasmPath('tree-sitter-typescript')
   const wasmBytes = await Deno.readFile(wasmPath)
   const language = await Language.load(wasmBytes)
   parser.setLanguage(language)
@@ -414,84 +233,148 @@ async function initializeParser(): Promise<Parser> {
   return parser
 }
 
-// Usage in parsing functions
-export async function list_symbols_in_file(path: string): Promise<SymbolInfo[]> {
-  const content = await Deno.readTextFile(path)
-  const activeParser = await initializeParser()  // Ensures initialization
-  const tree = activeParser.parse(content)
-  
-  if (!tree) {
-    throw new Error('Failed to parse source code - tree is null')
-  }
-  
-  // Tree parsing logic...
-}
+// Key Learning: web-tree-sitter requires explicit WASM loading in Deno
+// - No automatic module resolution like Node.js
+// - Must load Language objects from WASM bytes
+// - Singleton pattern recommended (parser initialization is expensive)
 ```
 
-#### Validated Results: Production Quality Parsing
+## 📋 Development Workflow
 
-**Test verification** (from `tests/indexing-e2e.test.ts`):
+### 1. TDD Protocol (Critical - NO CODE BEFORE TESTS)
 ```typescript
-// Input TypeScript code:
-export interface User {
-  id: number
-  name: string
-  email: string
-}
+// 🚨 MANDATORY: Write tests FIRST, then implement
+// ❌ NEVER write implementation code before tests exist
 
-export async function getUserById(id: number): Promise<User | null> {
-  return { id, name: 'Test User', email: 'test@example.com' }
-}
+// 1. Create test file first
+// tests/core/new-feature.test.ts
+describe('NewFeature', () => {
+  it('should handle basic functionality', () => {
+    // Test implementation
+  })
+})
 
-export class UserService {
-  async createUser(userData: Partial<User>): Promise<User> {
-    return { id: 1, name: 'New User', email: 'new@example.com' }
-  }
-}
+// 2. Run test (it should FAIL)
+// deno test tests/core/new-feature.test.ts
 
-// Parsing results:
-Found symbols: [
-  "User (interface_declaration)",
-  "getUserById (function_declaration)", 
-  "UserService (class_declaration)"
-]
+// 3. Only THEN implement the feature
+// src/infra/new-feature.ts
 ```
 
-#### Key Learnings for Future Implementation
+### 2. Feature Development Process
+1. **Create feature in prd.md** with acceptance criteria
+2. **🚨 WRITE TESTS FIRST** (TDD approach - tests must exist before any implementation)
+3. **Run tests to verify they fail** (red phase)
+4. **Implement minimal code to pass tests** (green phase)
+5. **Refactor while keeping tests passing** (refactor phase)
+6. **Update @tested_by annotations**
+7. **Verify all tests pass**
 
-1. **Don't trust module imports**: Always test actual Language object creation
-2. **Cache inspection is key**: Real module structure often differs from documentation  
-3. **WASM loading is explicit**: No automatic resolution in Deno environments
-4. **Singleton pattern essential**: Parser initialization is expensive
-5. **Error handling critical**: Always check for null trees and failed parsing
-6. **Path specificity required**: WASM files must be loaded from exact cache locations
+### 3. Testing Commands
+```bash
+# Core module tests
+deno test tests/core/
 
-#### Alternative Approaches Attempted (All Failed)
+# Agent system tests
+deno test tests/agent/
 
+# Full test suite
+deno test --allow-all
+
+# CLI integration tests
+./vibe index test_simple.ts
+./vibe query "interface"
+```
+
+### 4. Build and Release
+```bash
+# Build production binary
+deno task build
+
+# Cross-platform builds
+deno task build:cross-platform
+
+# Run type checking
+deno task check
+```
+
+## 🚨 Critical Guidelines
+
+### What to NEVER Do
+- ❌ **Write implementation code before tests exist** (TDD violation)
+- ❌ Create classes (use functional patterns only)
+- ❌ Add new core modules without justification
+- ❌ Use async/await without Effect-TS error handling
+- ❌ **Hardcode file paths** (use dynamic resolution instead)
+- ❌ Create duplicate implementations
+- ❌ Skip @tested_by annotations
+- ❌ Use Effect for simple async/await or synchronous transformations
+
+### What to ALWAYS Do
+- ✅ **Write tests FIRST, then implement** (TDD Protocol - Critical)
+- ✅ **Remove ALL hardcoded values** (use dynamic resolution)
+- ✅ Use composable primitives from src/agent/
+- ✅ Import from src/infra/ for shared functionality
+- ✅ Use Effect-TS for async operations with error handling
+- ✅ Validate with Zod v4 schemas
+- ✅ Follow functional programming patterns
+- ✅ **Maintain 100% @tested_by annotations** (comprehensive test coverage)
+- ✅ Update documentation after changes
+
+### Critical Examples - Dynamic Path Resolution
 ```typescript
-// ❌ Approach 1: Module language property
-import TypeScriptModule from 'tree-sitter-typescript'
-parser.setLanguage(TypeScriptModule.typescript.language)  // "Argument must be a Language"
+// ❌ BAD (hardcoded paths)
+const wasmPath = '/home/keyvan/.cache/deno/npm/...'
 
-// ❌ Approach 2: Function call pattern
-parser.setLanguage(TypeScriptModule.typescript())  // "typescript is not a function"
+// ✅ GOOD (dynamic resolution)
+const wasmPath = await resolveWasmPath('tree-sitter-typescript')
 
-// ❌ Approach 3: Direct import with wildcard
-import * as TypeScript from 'tree-sitter-typescript'
-parser.setLanguage(TypeScript.typescript)  // "Argument must be a Language"
+// ✅ More examples:
+// Dynamic config paths
+const configPath = await resolveConfigPath('.vibe/config.json')
 
-// ❌ Approach 4: Parser.Language.load with wrong syntax
-const Language = await Parser.Language.load(wasmBytes)  // "Cannot read properties of undefined"
+// Dynamic database paths
+const dbPath = await resolveDatabasePath('surreal://localhost:8000')
+
+// Dynamic template paths
+const templatePath = await resolveTemplatePath('universal-template')
 ```
 
-#### Production Benefits Achieved
+## 📁 File Structure Reference
 
-- **Zero runtime dependencies**: No tree-sitter-typescript module imports needed at runtime
-- **Fast initialization**: WASM loading cached after first use
-- **Robust error handling**: Comprehensive null checks and graceful failures
-- **Full TypeScript support**: Interfaces, functions, classes, types, enums all parsed correctly
-- **Accurate symbol extraction**: Precise start/end line numbers and content extraction
+```
+src/
+├── core/                    # Consolidated primitives
+│   ├── config.ts           # Central configuration
+│   ├── storage.ts          # Unified SurrealDB operations
+│   ├── embeddings.ts       # Embedding generation
+│   ├── errors.ts           # Tagged union error system
+│   ├── ast.ts              # Tree-sitter utilities
+│   └── logger.ts           # Structured logging
+├── agent/                   # Clean agent system
+│   ├── llm.ts              # Google GenAI wrapper
+│   ├── progress.ts         # Unified progress tracking
+│   ├── windowing.ts        # Flexible conversation strategies
+│   ├── conversation.ts     # Simple conversation management
+│   ├── indexing.ts         # Unified LLM-first indexing
+│   └── ...
+├── commands/                # CLI entry points
+│   ├── init.ts             # Project initialization
+│   ├── index.ts            # Code indexing
+│   └── query.ts            # Code search
+└── tests/                   # Comprehensive test suite
+    ├── core/               # Core module tests
+    ├── agent/              # Agent system tests
+    └── integration/        # End-to-end tests
+```
 
-This approach finally provides the missing bridge between web-tree-sitter and tree-sitter-typescript in Deno environments, solving a critical gap in the ecosystem documentation.
+## 📖 Documentation Files
 
-### Rest of the document remains the same (all previous content preserved)
+- **prd.md**: Feature requirements and acceptance criteria
+- **ARCHITECTURE.md**: System design and patterns
+- **CHANGELOG.md**: Release history and version tracking
+- **CLAUDE.md**: Development guidelines and best practices (this file)
+
+---
+
+**Remember**: This codebase prioritizes simplicity, composability, and functional programming patterns. When in doubt, choose the simpler approach that maintains clean module boundaries.

@@ -39,7 +39,7 @@
   "compilerOptions": {
     "lib": ["deno.ns", "dom"],
     "strict": true,
-    "exactOptionalPropertyTypes": true,
+    "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true
