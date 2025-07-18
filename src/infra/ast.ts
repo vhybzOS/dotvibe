@@ -10,10 +10,9 @@
 
 import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
-import { Parser } from 'web-tree-sitter'
+import { Parser, Language } from 'web-tree-sitter'
 import { createTreeSitterError, createProcessingError, type VibeError } from './errors.ts'
 import { logSystem } from './logger.ts'
-import { Language } from 'web-tree-sitter'
 
 /**
  * Symbol information extracted from AST
@@ -467,9 +466,31 @@ const extractElements = async (
   
   const walkNode = (node: any) => {
     if (shouldExtractElement(node)) {
-      const element = extractElementFromNode(node, lines, content, filePath)
-      if (element) {
-        elements.push(element)
+      // Special handling for import statements - create separate elements for each imported name
+      if (node.type === 'import_statement') {
+        const importedNames = extractImportNames(node)
+        const moduleName = extractModuleName(node)
+        
+        if (moduleName && importedNames.length > 0) {
+          for (const importedName of importedNames) {
+            const element = extractElementFromNodeWithName(node, lines, content, filePath, importedName)
+            if (element) {
+              elements.push(element)
+            }
+          }
+        } else {
+          // Fallback to original logic if extraction fails
+          const element = extractElementFromNode(node, lines, content, filePath)
+          if (element) {
+            elements.push(element)
+          }
+        }
+      } else {
+        // Normal element extraction for non-imports
+        const element = extractElementFromNode(node, lines, content, filePath)
+        if (element) {
+          elements.push(element)
+        }
       }
     }
     
@@ -561,13 +582,14 @@ const isTopLevelDeclaration = (node: any): boolean => {
 }
 
 /**
- * Extract element from AST node
+ * Extract element from AST node with specific name (for imports)
  */
-const extractElementFromNode = (
+const extractElementFromNodeWithName = (
   node: any,
   lines: string[],
   content: string,
-  filePath: string
+  filePath: string,
+  elementName: string
 ): CodeElementData | null => {
   try {
     const startLine = node.startPosition.row + 1
@@ -575,9 +597,8 @@ const extractElementFromNode = (
     const startColumn = node.startPosition.column
     const endColumn = node.endPosition.column
     
-    // Extract element name
-    const elementName = extractElementName(node)
-    if (!elementName || elementName === 'unknown') return null
+    // Use provided element name instead of extracting
+    if (!elementName) return null
     
     // Determine element type
     const elementType = mapNodeTypeToElementType(node.type)
@@ -595,9 +616,13 @@ const extractElementFromNode = (
     // Generate search phrases
     const searchPhrases = generateSearchPhrases(elementName, elementType, elementContent)
     
+    // Generate ID and file_path using hybrid scheme
+    const elementId = generateStorageElementId(filePath, elementName, node)
+    const elementFilePath = node.type === 'import_statement' ? extractModuleName(node) || filePath : filePath
+    
     return {
-      id: generateStorageElementId(filePath, elementName),
-      file_path: filePath,
+      id: elementId,
+      file_path: elementFilePath,
       element_name: elementName,
       element_type: elementType,
       start_line: startLine,
@@ -612,6 +637,28 @@ const extractElementFromNode = (
       parameters,
       return_type: returnType
     }
+  } catch (error) {
+    logSystem.warn(`Failed to extract element from node with name: ${error}`)
+    return null
+  }
+}
+
+/**
+ * Extract element from AST node
+ */
+const extractElementFromNode = (
+  node: any,
+  lines: string[],
+  content: string,
+  filePath: string
+): CodeElementData | null => {
+  try {
+    // Extract element name
+    const elementName = extractElementName(node)
+    if (!elementName || elementName === 'unknown') return null
+    
+    // Use the helper function with extracted name
+    return extractElementFromNodeWithName(node, lines, content, filePath, elementName)
   } catch (error) {
     logSystem.warn(`Failed to extract element from node: ${error}`)
     return null
@@ -697,15 +744,71 @@ const extractNameFromChildren = (node: any): string | null => {
 }
 
 /**
- * Extract import name
+ * Extract module name from import statement
  */
-const extractImportName = (node: any): string | null => {
-  // Extract source module name
+const extractModuleName = (node: any): string | null => {
   const sourceNode = node.namedChildren?.find((child: any) => child.type === 'string')
   if (sourceNode) {
     return sourceNode.text.replace(/['"]/g, '')
   }
   return null
+}
+
+/**
+ * Extract ALL imported names from import statement (for hybrid ID scheme)
+ */
+const extractImportNames = (node: any): string[] => {
+  const names: string[] = []
+  
+  try {
+    const importClause = node.namedChildren?.find((child: any) => child.type === 'import_clause')
+    if (!importClause) return names
+    
+    // Default import (import Parser from 'web-tree-sitter')
+    const defaultImport = importClause.namedChildren?.find((child: any) => child.type === 'identifier')
+    if (defaultImport) {
+      names.push(defaultImport.text)
+    }
+    
+    // Named imports (import { Parser, Language } from 'web-tree-sitter')
+    const namedImports = importClause.namedChildren?.find((child: any) => child.type === 'named_imports')
+    if (namedImports) {
+      for (const specifier of namedImports.namedChildren || []) {
+        if (specifier.type === 'import_specifier') {
+          const nameNode = specifier.namedChildren?.find((child: any) => child.type === 'identifier')
+          if (nameNode) {
+            names.push(nameNode.text)
+          }
+        }
+      }
+    }
+    
+    // Namespace imports (import * as fs from 'fs')
+    const namespaceImport = importClause.namedChildren?.find((child: any) => child.type === 'namespace_import')
+    if (namespaceImport) {
+      const nameNode = namespaceImport.namedChildren?.find((child: any) => child.type === 'identifier')
+      if (nameNode) {
+        names.push(nameNode.text)
+      }
+    }
+  } catch (error) {
+    logSystem.warn(`Failed to extract import names: ${error}`)
+  }
+  
+  return names
+}
+
+/**
+ * Extract import name (legacy - returns first imported name or module name)
+ */
+const extractImportName = (node: any): string | null => {
+  const names = extractImportNames(node)
+  if (names.length > 0) {
+    return names[0] // Return first imported name
+  }
+  
+  // Fallback to module name
+  return extractModuleName(node)
 }
 
 /**
@@ -1289,11 +1392,20 @@ const isAPICall = (functionName: string): boolean => {
 }
 
 /**
- * Generate storage-compatible element ID
+ * Generate storage-compatible element ID with hybrid scheme
+ * Internal elements: filePath:elementName
+ * External imports: moduleName:importedName
  */
-const generateStorageElementId = (filePath: string, elementName: string): string => {
-  // Generate simple ID without table prefix - storage layer adds table prefix when needed
-  // Let SurrealDB handle escaping automatically for complex identifiers
+const generateStorageElementId = (filePath: string, elementName: string, node?: any): string => {
+  // For import statements, use module:element format
+  if (node?.type === 'import_statement') {
+    const moduleName = extractModuleName(node)
+    if (moduleName) {
+      return `${moduleName}:${elementName}`
+    }
+  }
+  
+  // For all other elements, use filePath:elementName format
   return `${filePath}:${elementName}`
 }
 
