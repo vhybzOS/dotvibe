@@ -1,0 +1,61 @@
+version: '3'
+
+vars:
+  APP_NAME: install-dotvibe
+  VERSION:
+    sh: git describe --tags --always --dirty
+  LDFLAGS: >-
+    -w -s
+    -X main.version={{.VERSION}}
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  build:
+    desc: Build installer for current platform
+    sources:
+      - '*.go'
+    generates:
+      - '{{.APP_NAME}}{{exeExt}}'
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}{{exeExt}} .
+
+  build:all:
+    desc: Cross-compile for all platforms
+    cmds:
+      - GOOS=linux GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}-linux-amd64 .
+      - GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}-darwin-amd64 .
+      - GOOS=windows GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}-windows-amd64.exe .
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  test:coverage:
+    desc: Run tests with coverage
+    cmds:
+      - go test -v -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -f {{.APP_NAME}}*
+      - rm -f coverage.out coverage.html
+
+  lint:
+    desc: Run linter
+    cmds:
+      - go vet ./...
+      - test -z "$(gofmt -s -l .)"
+
+  run:
+    desc: Build and run installer
+    deps: [build]
+    cmds:
+      - ./{{.APP_NAME}}{{exeExt}}
