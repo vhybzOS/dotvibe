@@ -1,8 +1,9 @@
 /**
  * Enhanced AST Analyzer - Relationship Discovery & Data Flow Analysis
  * 
- * Builds upon src/infra/ast.ts to provide relationship discovery and data flow analysis
- * for the graph database architecture.
+ * Unified TypeScript/JavaScript parser for relationship discovery and data flow analysis.
+ * Uses TypeScript parser for both .ts/.tsx and .js/.jsx files since TypeScript is a 
+ * superset of JavaScript.
  * 
  * @tests tests/core/ast-analyzer.test.ts (AST parsing, relationships, data flow)
  */
@@ -62,12 +63,13 @@ interface ParserCacheEntry {
 const parserCache = new Map<string, ParserCacheEntry>()
 
 /**
- * Language configurations
+ * Language configuration
+ * Unified TypeScript parser handles both JavaScript and TypeScript files
  */
 export const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
   typescript: {
     name: 'typescript',
-    extensions: ['.ts', '.tsx'],
+    extensions: ['.ts', '.tsx', '.js', '.jsx'],
     wasmFile: 'tree-sitter-typescript.wasm',
     queries: {
       symbols: `
@@ -95,38 +97,12 @@ export const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
         (comment) @comment
       `
     }
-  },
-  javascript: {
-    name: 'javascript',
-    extensions: ['.js', '.jsx'],
-    wasmFile: 'tree-sitter-javascript.wasm',
-    queries: {
-      symbols: `
-        (function_declaration name: (identifier) @name) @function
-        (method_definition name: (property_identifier) @name) @method
-        (class_declaration name: (identifier) @name) @class
-        (variable_declaration (variable_declarator name: (identifier) @name)) @variable
-        (lexical_declaration (variable_declarator name: (identifier) @name)) @variable
-      `,
-      imports: `
-        (import_statement source: (string) @source) @import
-        (import_statement (import_clause (identifier) @default)) @import
-        (import_statement (import_clause (named_imports (import_specifier name: (identifier) @name)))) @import
-      `,
-      exports: `
-        (export_statement (function_declaration name: (identifier) @name)) @export
-        (export_statement (class_declaration name: (identifier) @name)) @export
-        (export_statement (variable_declaration (variable_declarator name: (identifier) @name))) @export
-      `,
-      comments: `
-        (comment) @comment
-      `
-    }
   }
 }
 
 /**
  * Resolve WASM path for a language dynamically
+ * Detects compiled executable vs development mode
  */
 export const resolveWasmPath = async (language: string): Promise<string> => {
   const config = LANGUAGE_CONFIGS[language]
@@ -134,6 +110,31 @@ export const resolveWasmPath = async (language: string): Promise<string> => {
     throw new Error(`Unsupported language: ${language}`)
   }
   
+  // Check if running from compiled executable
+  const isCompiled = !import.meta.url.startsWith('file:///')
+  
+  if (isCompiled) {
+    // Compiled executable: use WASM files from data/ directory
+    // Try relative to current working directory first (installed alongside executable)
+    try {
+      const dataPath = `./data/${config.wasmFile}`
+      await Deno.stat(dataPath)
+      return dataPath
+    } catch {
+      // Fallback: relative to executable directory
+      try {
+        const executableDir = new URL('.', import.meta.url).pathname
+        const dataPath = `${executableDir}../data/${config.wasmFile}`
+        await Deno.stat(dataPath)
+        return dataPath
+      } catch (error) {
+        throw new Error(`Failed to find WASM file in data/ directory for ${language}. ` +
+                       `Make sure the installer has downloaded the required files: ${error}`)
+      }
+    }
+  }
+  
+  // Development mode: use npm cache (existing logic)
   const cacheBase = `${Deno.env.get('HOME')}/.cache/deno/npm/registry.npmjs.org`
   const packageName = `tree-sitter-${language}`
   
@@ -219,16 +220,17 @@ export const getParser = (language: string): Effect.Effect<Parser, VibeError> =>
 
 /**
  * Detect language from file extension
+ * All JavaScript and TypeScript files use the unified TypeScript parser
  */
 export const detectLanguage = (filePath: string): string => {
   const ext = filePath.split('.').pop()?.toLowerCase()
   
-  for (const [language, config] of Object.entries(LANGUAGE_CONFIGS)) {
-    if (config.extensions.some(e => e === `.${ext}`)) {
-      return language
-    }
+  // All JS/TS files use TypeScript parser (which handles both)
+  if (ext && ['ts', 'tsx', 'js', 'jsx'].includes(ext)) {
+    return 'typescript'
   }
   
+  // Default fallback for any other files
   return 'typescript'
 }
 
