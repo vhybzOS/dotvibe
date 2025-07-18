@@ -101,6 +101,8 @@ export interface CodeElement extends CodeElementData {
 export interface IndexResult {
   filePath: string
   elementsAdded: number
+  elementsUpdated: number
+  elementsRemoved: number
   relationshipsAdded: number
   dataFlowsAdded: number
   placeholdersCreated: number
@@ -495,50 +497,90 @@ export const indexFile = (
         const absolutePath = resolveProjectPath(filePath, projectPath)
         const currentTime = now()
         
-        // Clear existing non-placeholder data for this file (preserve placeholders)
-        await db.query(`DELETE FROM code_elements WHERE file_path = $filePath AND is_placeholder = false`, { filePath: absolutePath })
-        
+        // Granular element updates - preserve relationships by using element_path as stable ID
         let elementsAdded = 0
+        let elementsUpdated = 0
+        let elementsRemoved = 0
         let relationshipsAdded = 0
         let dataFlowsAdded = 0
         let placeholdersCreated = 0
         let relationshipsResolved = 0
         const errors: string[] = []
         
-        // Store elements with placeholder-aware logic
+        // Get existing elements in this file for comparison
+        const existingElementsQuery = `
+          SELECT element_path, id, is_placeholder FROM code_elements 
+          WHERE file_path = $filePath AND is_placeholder = false
+        `
+        const existingElementsResult = await db.query(existingElementsQuery, { filePath: absolutePath })
+        const existingElementPaths = new Set(
+          (existingElementsResult?.[0] || []).map((e: any) => e.element_path)
+        )
+        
+        // Track which elements we're updating (to know which to remove later)
+        const updatedElementPaths = new Set<string>()
+        
+        // Store/update elements with granular UPSERT logic
         console.log(`DEBUG: About to store ${parseResult.elements.length} elements`)
         for (const element of parseResult.elements) {
           try {
             const elementPath = element.id // AST generates path-based IDs
+            updatedElementPaths.add(elementPath)
             
             console.log(`DEBUG: Storing element: ${element.element_name} (${element.element_type}) at path: ${elementPath}`)
             
-            // Check if a placeholder already exists for this element
+            // Check if element already exists (placeholder or real)
             const existingElement = await getExistingElement(elementPath, db)
             
-            if (existingElement && existingElement.is_placeholder) {
-              // UPDATE existing placeholder to preserve ID and relationships
-              console.log(`DEBUG: Updating placeholder to real element: ${element.element_name}`)
-              
-              await db.query(`
-                UPDATE code_elements SET
-                  element_type = $element_type,
-                  start_line = $start_line,
-                  end_line = $end_line,
-                  content = $content,
-                  is_placeholder = false
-                WHERE id = $elementId
-              `, {
-                elementId: existingElement.id,
-                element_type: element.element_type,
-                start_line: element.start_line,
-                end_line: element.end_line,
-                content: element.content
-              })
-              
-              console.log(`DEBUG: Successfully updated placeholder ${element.element_name} to real element`)
+            if (existingElement) {
+              if (existingElement.is_placeholder) {
+                // UPDATE existing placeholder to preserve ID and relationships
+                console.log(`DEBUG: Updating placeholder to real element: ${element.element_name}`)
+                
+                await db.query(`
+                  UPDATE code_elements SET
+                    element_type = $element_type,
+                    start_line = $start_line,
+                    end_line = $end_line,
+                    content = $content,
+                    is_placeholder = false
+                  WHERE id = $elementId
+                `, {
+                  elementId: existingElement.id,
+                  element_type: element.element_type,
+                  start_line: element.start_line,
+                  end_line: element.end_line,
+                  content: element.content
+                })
+                
+                console.log(`DEBUG: Successfully updated placeholder ${element.element_name} to real element`)
+                elementsUpdated++
+              } else {
+                // UPDATE existing real element with new content (idempotent)
+                console.log(`DEBUG: Updating existing element: ${element.element_name}`)
+                
+                await db.query(`
+                  UPDATE code_elements SET
+                    element_type = $element_type,
+                    start_line = $start_line,
+                    end_line = $end_line,
+                    content = $content
+                  WHERE element_path = $elementPath
+                `, {
+                  elementPath,
+                  element_type: element.element_type,
+                  start_line: element.start_line,
+                  end_line: element.end_line,
+                  content: element.content
+                })
+                
+                console.log(`DEBUG: Successfully updated existing element: ${element.element_name}`)
+                elementsUpdated++
+              }
             } else {
-              // UPSERT new element (no placeholder exists)
+              // CREATE new element using UPSERT with element_path as key
+              console.log(`DEBUG: Creating new element: ${element.element_name}`)
+              
               await db.query(`
                 UPSERT code_elements CONTENT {
                   element_path: $elementPath,
@@ -561,12 +603,31 @@ export const indexFile = (
               })
               
               console.log(`DEBUG: Successfully created new element: ${element.element_name}`)
+              elementsAdded++
             }
-            
-            elementsAdded++
           } catch (error) {
             console.log(`DEBUG: Failed to store element ${element.element_name}:`, error)
             errors.push(`Failed to store element ${element.element_name}: ${error.message}`)
+          }
+        }
+        
+        // Remove elements that existed before but are no longer in the parse result
+        for (const existingPath of existingElementPaths) {
+          if (!updatedElementPaths.has(existingPath)) {
+            try {
+              console.log(`DEBUG: Removing deleted element: ${existingPath}`)
+              
+              // Delete the element and its relationships will be auto-cleaned by SurrealDB
+              await db.query(`DELETE FROM code_elements WHERE element_path = $elementPath`, {
+                elementPath: existingPath
+              })
+              
+              elementsRemoved++
+              console.log(`DEBUG: Successfully removed deleted element: ${existingPath}`)
+            } catch (error) {
+              console.log(`DEBUG: Failed to remove element ${existingPath}:`, error)
+              errors.push(`Failed to remove element ${existingPath}: ${error.message}`)
+            }
           }
         }
         
@@ -605,11 +666,13 @@ export const indexFile = (
         }
         
         const processingTime = Date.now() - startTime
-        debugOnly(() => logStorage.debug(`Indexed ${filePath}: ${elementsAdded} elements, ${relationshipsAdded} relationships, ${dataFlowsAdded} data flows, ${placeholdersCreated} placeholders, ${relationshipsResolved} resolved in ${processingTime}ms`))
+        debugOnly(() => logStorage.debug(`Indexed ${filePath}: ${elementsAdded} added, ${elementsUpdated} updated, ${elementsRemoved} removed, ${relationshipsAdded} relationships, ${dataFlowsAdded} data flows, ${placeholdersCreated} placeholders, ${relationshipsResolved} resolved in ${processingTime}ms`))
         
         return {
           filePath: absolutePath,
           elementsAdded,
+          elementsUpdated,
+          elementsRemoved,
           relationshipsAdded,
           dataFlowsAdded,
           placeholdersCreated,
@@ -1066,7 +1129,7 @@ if (import.meta.main) {
           const result = await Effect.runPromise(indexFile(filePath, projectPath))
           console.log('📊 Index Result:')
           console.log(`   File: ${result.filePath}`)
-          console.log(`   Elements: ${result.elementsAdded}`)
+          console.log(`   Elements: ${result.elementsAdded} added, ${result.elementsUpdated} updated, ${result.elementsRemoved} removed`)
           console.log(`   Relationships: ${result.relationshipsAdded}`)
           console.log(`   Data Flows: ${result.dataFlowsAdded}`)
           console.log(`   Processing Time: ${result.processingTime}ms`)
