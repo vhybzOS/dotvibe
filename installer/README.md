@@ -116,16 +116,18 @@ https://github.com/vhybzOS/dotvibe/releases/download/{version}/vibe-{version}-{o
 - **Fail installation** if any checksum mismatch detected
 - **Security**: Prevents tampering and corruption
 
-### 4. Smart Installation Paths
+### 4. Versioned Installation Structure
 
 #### System Installation (with admin privileges)
-- **Binaries**: `/usr/local/bin/` (Unix) or `C:\Program Files\dotvibe\bin\` (Windows)
-- **Data**: `/usr/local/share/dotvibe/` (Unix) or `C:\Program Files\dotvibe\data\` (Windows)
+- **Location**: `/usr/local/dotvibe/{version}/` (Unix) or `C:\Program Files\dotvibe\{version}\` (Windows)
+- **Layout**: `vibe` executable and `data/` directory co-located for consistent `./data/` paths
+- **Symlink**: `/usr/local/bin/vibe` → `/usr/local/dotvibe/{version}/vibe`
 - **Available to**: All users on system
 
 #### User Installation (no admin needed)
-- **Binaries**: `~/.local/bin/` (Unix) or `%APPDATA%\dotvibe\bin\` (Windows)  
-- **Data**: `~/.local/share/dotvibe/` (Unix) or `%APPDATA%\dotvibe\data\` (Windows)
+- **Location**: `~/.local/dotvibe/{version}/` (Unix) or `%APPDATA%\dotvibe\{version}\` (Windows)
+- **Layout**: `vibe` executable and `data/` directory co-located for consistent `./data/` paths
+- **Symlink**: `~/.local/bin/vibe` → `~/.local/dotvibe/{version}/vibe`
 - **Available to**: Current user only
 
 ### 5. Symlink Strategy and PATH Management
@@ -180,24 +182,24 @@ cd installer && task build:all
 
 ## 🔄 Runtime Path Resolution
 
-### Development Mode
-**Location**: [`../src/infra/ast.ts:137-162`](../src/infra/ast.ts)
+### Unified Approach (Development + Production)
+**Location**: [`../src/infra/ast.ts`](../src/infra/ast.ts)
+
+With the versioned installation structure, path resolution is simplified:
 
 ```typescript
-// Uses Deno's npm cache
-const cacheBase = `${Deno.env.get('HOME')}/.cache/deno/npm/registry.npmjs.org`
-const wasmPath = `${cacheBase}/tree-sitter-typescript/0.23.2/tree-sitter-typescript.wasm`
+// Consistent across all environments:
+const wasmPath = `./data/tree-sitter-typescript.wasm`
+
+// Development: ./vibe and ./data/ co-located in repo
+// Production: vibe and data/ co-located in versioned install directory
+// No complex fallback logic needed!
 ```
 
-### Compiled Executable Mode  
-**Location**: [`../src/infra/ast.ts:116-135`](../src/infra/ast.ts)
-
-```typescript
-// Looks for installer-provided WASM file
-const dataPath = `./data/tree-sitter-typescript.wasm`
-// Fallback: relative to executable directory
-const fallbackPath = `${executableDir}../data/tree-sitter-typescript.wasm`
-```
+**Benefits**:
+- **Consistent paths**: `./data/` works in development and production
+- **Simplified logic**: No need for complex executable directory detection
+- **Reliable resolution**: WASM files always found relative to executable
 
 ## 🎯 Installation Locations
 
@@ -205,17 +207,19 @@ const fallbackPath = `${executableDir}../data/tree-sitter-typescript.wasm`
 
 | Component | Linux/macOS | Windows | Purpose |
 |-----------|-------------|---------|---------|
-| **Binaries** | `/usr/local/bin/` | `C:\Program Files\dotvibe\bin\` | vibe, surreal, code2prompt |
-| **Data** | `/usr/local/share/dotvibe/` | `C:\Program Files\dotvibe\data\` | WASM files, configs |
-| **Symlinks** | `/usr/local/bin/vibe` → versioned binary | Copy (no symlink complexity) | Version management |
+| **Install Directory** | `/usr/local/dotvibe/{version}/` | `C:\Program Files\dotvibe\{version}\` | Versioned install location |
+| **Executables** | `{install_dir}/vibe`, `{install_dir}/surreal`, etc. | Same + `.exe` | All binaries co-located |
+| **Data** | `{install_dir}/data/` | Same | WASM files, configs (relative to executables) |
+| **PATH Symlinks** | `/usr/local/bin/vibe` → `{install_dir}/vibe` | Copy to `C:\Windows\System32\` | Global access |
 
 ### User Installation Paths (No Admin Required)
 
 | Component | Linux/macOS | Windows | Purpose |
 |-----------|-------------|---------|---------|
-| **Binaries** | `~/.local/bin/` | `%APPDATA%\dotvibe\bin\` | vibe, surreal, code2prompt |
-| **Data** | `~/.local/share/dotvibe/` | `%APPDATA%\dotvibe\data\` | WASM files, configs |
-| **Symlinks** | `~/.local/bin/vibe` → versioned binary | Copy (no symlink complexity) | Version management |
+| **Install Directory** | `~/.local/dotvibe/{version}/` | `%APPDATA%\dotvibe\{version}\` | Versioned install location |
+| **Executables** | `{install_dir}/vibe`, `{install_dir}/surreal`, etc. | Same + `.exe` | All binaries co-located |
+| **Data** | `{install_dir}/data/` | Same | WASM files, configs (relative to executables) |
+| **PATH Symlinks** | `~/.local/bin/vibe` → `{install_dir}/vibe` | Update `%PATH%` environment | User access |
 
 ### System Requirements
 - **Disk space**: ~50MB total (no Rust toolchain!)
@@ -254,8 +258,9 @@ sudo ./install-dotvibe --system
 # Test uninstallation
 ./install-dotvibe --uninstall
 
-# Build Deno executable
-deno task build
+# Test developer mode (symlinks local ./vibe to PATH)
+deno task build  # Build local vibe executable first
+./install-dotvibe --dev  # Downloads WASM to ./data/, symlinks ./vibe
 
 # Test integration
 vibe --version && surreal version && code2prompt --version
