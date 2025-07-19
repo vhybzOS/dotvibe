@@ -10,7 +10,7 @@
 
 import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
-import { Parser, Language } from 'web-tree-sitter'
+import { Parser, Language, Query } from 'web-tree-sitter'
 import { createTreeSitterError, createProcessingError, type VibeError } from './errors.ts'
 import { logSystem } from './logger.ts'
 
@@ -94,6 +94,30 @@ export const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
       `,
       comments: `
         (comment) @comment
+      `,
+      dataflow: `
+        ; Variable assignments (const config = DEFAULT_ERROR_CONFIG)
+        (variable_declarator 
+          name: (identifier) @var_name 
+          value: (identifier) @var_value) @variable_assignment
+        
+        ; Property access (config.maxRetries)
+        (member_expression 
+          object: (identifier) @object 
+          property: (property_identifier) @property) @property_access
+        
+        ; Assignment expressions (a = b)
+        (assignment_expression 
+          left: (identifier) @left 
+          right: (identifier) @right) @assignment
+        
+        ; Function calls with arguments (func(arg1, arg2))
+        (call_expression 
+          function: (identifier) @function 
+          arguments: (arguments) @args) @call
+        
+        ; Return statements (return value)
+        (return_statement (identifier) @return_value) @return
       `
     }
   }
@@ -239,6 +263,17 @@ export const detectLanguage = (filePath: string): string => {
 export type ElementType = 'function' | 'class' | 'interface' | 'variable' | 'import' | 'export' | 'method' | 'field' | 'type' | 'enum' | 'expression' | 'property' | 'call' | 'assignment' | 'conditional' | 'literal' | 'statement'
 export type RelationshipType = 'calls' | 'imports' | 'extends' | 'implements' | 'contains' | 'exports' | 'uses'
 export type DataFlowType = 'parameter_input' | 'return_output' | 'argument_passing' | 'assignment' | 'property_access' | 'transformation' | 'side_effect'
+
+/**
+ * Data flow query pattern indices (matches order in LANGUAGE_CONFIGS.typescript.queries.dataflow)
+ */
+enum DataFlowPattern {
+  VARIABLE_ASSIGNMENT = 0,
+  PROPERTY_ACCESS = 1, 
+  ASSIGNMENT = 2,
+  CALL = 3,
+  RETURN = 4
+}
 
 /**
  * Enhanced parse result with relationship information
@@ -1394,14 +1429,15 @@ const isAPICall = (functionName: string): boolean => {
 /**
  * Generate storage-compatible element ID with hybrid scheme
  * Internal elements: filePath:elementName
- * External imports: moduleName:importedName
+ * External imports: moduleName:importedName (resolved to absolute paths)
  */
 const generateStorageElementId = (filePath: string, elementName: string, node?: any): string => {
-  // For import statements, use module:element format
+  // For import statements, use resolved module:element format
   if (node?.type === 'import_statement') {
     const moduleName = extractModuleName(node)
     if (moduleName) {
-      return `${moduleName}:${elementName}`
+      const resolvedModuleName = resolveImportPath(moduleName, filePath)
+      return `${resolvedModuleName}:${elementName}`
     }
   }
   
@@ -1447,6 +1483,22 @@ const resolveImportPath = (importPath: string, currentFilePath: string): string 
  */
 const generateRelationshipId = (filePath: string, elementName: string): string => {
   return generateStorageElementId(filePath, elementName)
+}
+
+/**
+ * Generate data flow element ID - checks if element is imported and uses correct path
+ */
+const generateDataFlowElementId = (parseResult: ParseResult, elementName: string): string => {
+  // Check if this element name is imported - look through the parse result elements
+  for (const element of parseResult.elements) {
+    if (element.element_type === 'import' && element.element_name === elementName) {
+      // Use the import element's ID which should have the resolved path
+      return element.id || generateStorageElementId(parseResult.filePath, elementName)
+    }
+  }
+  
+  // Not imported, use local file path
+  return generateRelationshipId(parseResult.filePath, elementName)
 }
 
 /**
@@ -1564,134 +1616,153 @@ const findContainingElement = (node: any, elements: CodeElementData[]): CodeElem
 }
 
 /**
- * Synchronous data flow analysis
+ * Tree-sitter query-based data flow analysis
  */
 const analyzeDataFlowSync = async (parseResult: ParseResult): Promise<DataFlowRelationshipData[]> => {
   const dataFlows: DataFlowRelationshipData[] = []
   
-  const walkNode = (node: any) => {
-    // Find assignments
-    if (node.type === 'assignment_expression') {
-      const assignmentFlow = extractAssignmentFlow(node, parseResult)
-      if (assignmentFlow) {
-        dataFlows.push(assignmentFlow)
+  try {
+    // Get the language from parser cache
+    const cached = parserCache.get('typescript')
+    if (!cached) {
+      console.log('DEBUG: No cached language found, skipping query-based analysis')
+      return dataFlows
+    }
+    
+    const language = cached.language
+    // Use new Query constructor instead of deprecated language.query
+    const query = new Query(language, LANGUAGE_CONFIGS.typescript.queries.dataflow)
+    const matches = query.matches(parseResult.tree.rootNode)
+    
+    for (const match of matches) {
+      const flow = extractDataFlowFromMatch(match, parseResult)
+      if (flow) {
+        dataFlows.push(flow)
       }
     }
-    
-    // Find function calls with arguments
-    if (node.type === 'call_expression') {
-      const argumentFlows = extractArgumentFlows(node, parseResult)
-      dataFlows.push(...argumentFlows)
-    }
-    
-    // Find return statements
-    if (node.type === 'return_statement') {
-      const returnFlow = extractReturnFlow(node, parseResult)
-      if (returnFlow) {
-        dataFlows.push(returnFlow)
-      }
-    }
-    
-    // Recursively walk children
-    for (const child of node.children || []) {
-      walkNode(child)
-    }
+  } catch (error) {
+    console.log('DEBUG: Query error:', error)
+    logSystem.warn(`Failed to analyze data flow with tree-sitter queries: ${error}`)
+    // Fallback to empty array - better than crashing
   }
-  
-  walkNode(parseResult.tree.rootNode)
   
   return dataFlows
 }
 
 /**
- * Extract assignment flow
+ * Extract data flow from tree-sitter query match
  */
-const extractAssignmentFlow = (node: any, parseResult: ParseResult): DataFlowRelationshipData | null => {
+const extractDataFlowFromMatch = (match: any, parseResult: ParseResult): DataFlowRelationshipData | null => {
   try {
-    const left = node.namedChildren?.[0]?.text
-    const right = node.namedChildren?.[1]?.text
+    const captures = new Map()
+    for (const capture of match.captures) {
+      captures.set(capture.name, capture.node)
+    }
     
-    if (!left || !right) return null
+    const patternIndex = match.patternIndex
     
-    const fromId = generateRelationshipId(parseResult.filePath, right)
-    const toId = generateRelationshipId(parseResult.filePath, left)
-    
-    return {
-      from: fromId,
-      to: toId,
-      flow_type: 'assignment',
-      flow_metadata: {
-        assignment_line: node.startPosition.row + 1,
-        assignment_text: node.text
+    // Handle variable assignment: const config = DEFAULT_ERROR_CONFIG
+    if (patternIndex === DataFlowPattern.VARIABLE_ASSIGNMENT) {
+      const varName = captures.get('var_name')?.text
+      const varValue = captures.get('var_value')?.text
+      
+      if (!varName || !varValue) return null
+      
+      // For variable assignments, we need to check if the source variable is imported
+      const fromPath = generateDataFlowElementId(parseResult, varValue) // DEFAULT_ERROR_CONFIG (could be imported)
+      const toPath = generateRelationshipId(parseResult.filePath, varName)     // config (local variable)
+      
+      return {
+        from: fromPath,
+        to: toPath,
+        flow_type: 'assignment',
+        flow_metadata: {
+          assignment_line: captures.get('var_name')?.startPosition.row + 1,
+          assignment_text: `${varName} = ${varValue}`
+        }
       }
     }
-  } catch (error) {
-    logSystem.warn(`Failed to extract assignment flow: ${error}`)
-    return null
-  }
-}
-
-/**
- * Extract argument flows
- */
-const extractArgumentFlows = (node: any, parseResult: ParseResult): DataFlowRelationshipData[] => {
-  const flows: DataFlowRelationshipData[] = []
-  
-  try {
-    const functionName = node.namedChildren?.[0]?.text
-    if (!functionName) return flows
     
-    const argumentsNode = node.namedChildren?.find((child: any) => child.type === 'arguments')
-    if (!argumentsNode) return flows
-    
-    const toId = generateRelationshipId(parseResult.filePath, functionName)
-    
-    for (const [index, arg] of (argumentsNode.namedChildren || []).entries()) {
-      const fromId = generateRelationshipId(parseResult.filePath, arg.text)
+    // Handle property access: config.maxRetries
+    if (patternIndex === DataFlowPattern.PROPERTY_ACCESS) {
+      const object = captures.get('object')?.text
+      const property = captures.get('property')?.text
       
-      flows.push({
-        from: fromId,
-        to: toId,
+      if (!object || !property) return null
+      
+      return {
+        from: generateRelationshipId(parseResult.filePath, object), // config
+        to: generateRelationshipId(parseResult.filePath, `${object}.${property}`), // config.maxRetries
+        flow_type: 'property_access',
+        flow_metadata: {
+          access_line: captures.get('object')?.startPosition.row + 1,
+          property_name: property,
+          object_name: object
+        }
+      }
+    }
+    
+    // Handle assignment expressions: a = b
+    if (patternIndex === DataFlowPattern.ASSIGNMENT) {
+      const left = captures.get('left')?.text
+      const right = captures.get('right')?.text
+      
+      if (!left || !right) return null
+      
+      return {
+        from: generateRelationshipId(parseResult.filePath, right),
+        to: generateRelationshipId(parseResult.filePath, left),
+        flow_type: 'assignment',
+        flow_metadata: {
+          assignment_line: captures.get('left')?.startPosition.row + 1,
+          assignment_text: `${left} = ${right}`
+        }
+      }
+    }
+    
+    // Handle function calls: func(arg1, arg2)
+    if (patternIndex === DataFlowPattern.CALL) {
+      const functionName = captures.get('function')?.text
+      const argsNode = captures.get('args')
+      
+      if (!functionName || !argsNode) return null
+      
+      // For now, create one flow for the function call itself
+      // Could be extended to handle individual arguments
+      return {
+        from: generateRelationshipId(parseResult.filePath, 'caller'),
+        to: generateRelationshipId(parseResult.filePath, functionName),
         flow_type: 'argument_passing',
         flow_metadata: {
-          parameter_position: index,
-          call_line: node.startPosition.row + 1,
-          argument_text: arg.text
+          call_line: captures.get('function')?.startPosition.row + 1,
+          function_name: functionName,
+          argument_count: argsNode.namedChildren?.length || 0
         }
-      })
-    }
-  } catch (error) {
-    logSystem.warn(`Failed to extract argument flows: ${error}`)
-  }
-  
-  return flows
-}
-
-/**
- * Extract return flow
- */
-const extractReturnFlow = (node: any, parseResult: ParseResult): DataFlowRelationshipData | null => {
-  try {
-    const containingFunction = findContainingElement(node, parseResult.elements)
-    if (!containingFunction) return null
-    
-    const returnValue = node.namedChildren?.[0]?.text
-    if (!returnValue) return null
-    
-    const fromId = generateRelationshipId(parseResult.filePath, containingFunction.element_name)
-    const toId = generateRelationshipId(parseResult.filePath, returnValue)
-    
-    return {
-      from: fromId,
-      to: toId,
-      flow_type: 'return_output',
-      flow_metadata: {
-        return_line: node.startPosition.row + 1,
-        return_text: node.text
       }
     }
+    
+    // Handle return statements: return value
+    if (patternIndex === DataFlowPattern.RETURN) {
+      const returnValue = captures.get('return_value')?.text
+      if (!returnValue) return null
+      
+      const containingFunction = findContainingElement(captures.get('return_value'), parseResult.elements)
+      if (!containingFunction) return null
+      
+      return {
+        from: generateRelationshipId(parseResult.filePath, containingFunction.element_name),
+        to: generateRelationshipId(parseResult.filePath, returnValue),
+        flow_type: 'return_output',
+        flow_metadata: {
+          return_line: captures.get('return_value')?.startPosition.row + 1,
+          return_text: returnValue
+        }
+      }
+    }
+    
+    return null
   } catch (error) {
-    logSystem.warn(`Failed to extract return flow: ${error}`)
+    logSystem.warn(`Failed to extract data flow from match: ${error}`)
     return null
   }
 }
