@@ -1,9 +1,9 @@
 /**
  * Unified Error Handling System
- * 
+ *
  * Extracts and consolidates error handling from src/index.ts into a central module
  * with tagged union types for better error management and debugging.
- * 
+ *
  * @tested_by tests/core/errors.test.ts (Error creation, handling, serialization)
  */
 
@@ -126,7 +126,7 @@ export interface WorkspaceError extends BaseVibeError {
 /**
  * Union type for all possible errors
  */
-export type VibeError = 
+export type VibeError =
   | StorageError
   | ConfigurationError
   | NetworkError
@@ -166,7 +166,7 @@ export const createStorageError = (
   operation: StorageError['operation'],
   message: string,
   resource: string = 'unknown',
-  details?: StorageError['details']
+  details?: StorageError['details'],
 ): StorageError => {
   return {
     _tag: 'StorageError',
@@ -179,8 +179,8 @@ export const createStorageError = (
     context: {
       subsystem: 'storage',
       severity: 'high',
-      recoveryStrategy: operation === 'connect' ? 'retry' : 'skip'
-    }
+      recoveryStrategy: operation === 'connect' ? 'retry' : 'skip',
+    },
   }
 }
 
@@ -192,7 +192,7 @@ export const createConfigurationError = (
   message: string,
   configType: ConfigurationError['configType'] = 'validation',
   configPath?: string,
-  invalidFields?: string[]
+  invalidFields?: string[],
 ): ConfigurationError => {
   return {
     _tag: 'ConfigurationError',
@@ -205,8 +205,8 @@ export const createConfigurationError = (
     context: {
       subsystem: 'configuration',
       severity: 'critical',
-      recoveryStrategy: 'abort'
-    }
+      recoveryStrategy: 'abort',
+    },
   }
 }
 
@@ -218,7 +218,7 @@ export const createNetworkError = (
   service: string,
   operation: string,
   statusCode?: number,
-  retryable: boolean = true
+  retryable: boolean = true,
 ): NetworkError => {
   return {
     _tag: 'NetworkError',
@@ -232,8 +232,8 @@ export const createNetworkError = (
     context: {
       subsystem: 'network',
       severity: statusCode && statusCode >= 500 ? 'high' : 'medium',
-      recoveryStrategy: retryable ? 'retry' : 'skip'
-    }
+      recoveryStrategy: retryable ? 'retry' : 'skip',
+    },
   }
 }
 
@@ -246,7 +246,7 @@ export const createProcessingError = (
   message: string,
   filePath?: string,
   componentName?: string,
-  recoverable: boolean = true
+  recoverable: boolean = true,
 ): ProcessingError => {
   return {
     _tag: 'ProcessingError',
@@ -260,8 +260,8 @@ export const createProcessingError = (
     context: {
       subsystem: 'processing',
       severity: recoverable ? 'medium' : 'high',
-      recoveryStrategy: recoverable ? 'skip' : 'abort'
-    }
+      recoveryStrategy: recoverable ? 'skip' : 'abort',
+    },
   }
 }
 
@@ -272,7 +272,7 @@ export const createFileSystemError = (
   cause: unknown,
   operation: FileSystemError['operation'],
   path: string,
-  permissions: boolean = false
+  permissions: boolean = false,
 ): FileSystemError => {
   return {
     _tag: 'FileSystemError',
@@ -285,8 +285,8 @@ export const createFileSystemError = (
     context: {
       subsystem: 'filesystem',
       severity: permissions ? 'high' : 'medium',
-      recoveryStrategy: 'skip'
-    }
+      recoveryStrategy: 'skip',
+    },
   }
 }
 
@@ -297,7 +297,7 @@ export const createValidationError = (
   message: string,
   schemaName: string,
   validationErrors: ValidationError['validationErrors'],
-  input?: unknown
+  input?: unknown,
 ): ValidationError => {
   return {
     _tag: 'ValidationError',
@@ -310,8 +310,8 @@ export const createValidationError = (
     context: {
       subsystem: 'validation',
       severity: 'medium',
-      recoveryStrategy: 'user_input'
-    }
+      recoveryStrategy: 'user_input',
+    },
   }
 }
 
@@ -323,7 +323,7 @@ export const createTreeSitterError = (
   phase: TreeSitterError['phase'],
   message: string,
   language?: string,
-  wasmPath?: string
+  wasmPath?: string,
 ): TreeSitterError => {
   return {
     _tag: 'TreeSitterError',
@@ -336,8 +336,8 @@ export const createTreeSitterError = (
     context: {
       subsystem: 'treesitter',
       severity: phase === 'initialization' ? 'critical' : 'high',
-      recoveryStrategy: phase === 'parsing' ? 'skip' : 'abort'
-    }
+      recoveryStrategy: phase === 'parsing' ? 'skip' : 'abort',
+    },
   }
 }
 
@@ -350,7 +350,7 @@ export const createAgentError = (
   message: string,
   model?: string,
   tokensUsed?: number,
-  rateLimited: boolean = false
+  rateLimited: boolean = false,
 ): AgentError => {
   return {
     _tag: 'AgentError',
@@ -364,8 +364,8 @@ export const createAgentError = (
     context: {
       subsystem: 'agent',
       severity: rateLimited ? 'medium' : 'high',
-      recoveryStrategy: rateLimited ? 'retry' : 'skip'
-    }
+      recoveryStrategy: rateLimited ? 'retry' : 'skip',
+    },
   }
 }
 
@@ -377,7 +377,7 @@ export const createWorkspaceError = (
   workspace: string,
   action: WorkspaceError['action'],
   message: string,
-  lockFile?: string
+  lockFile?: string,
 ): WorkspaceError => {
   return {
     _tag: 'WorkspaceError',
@@ -390,8 +390,8 @@ export const createWorkspaceError = (
     context: {
       subsystem: 'workspace',
       severity: action === 'initialize' ? 'critical' : 'medium',
-      recoveryStrategy: action === 'lock' ? 'retry' : 'skip'
-    }
+      recoveryStrategy: action === 'lock' ? 'retry' : 'skip',
+    },
   }
 }
 
@@ -428,16 +428,18 @@ export const serializeError = (error: VibeError): Record<string, unknown> => {
     message: error.message,
     timestamp: error.timestamp.toISOString(),
     context: error.context,
-    cause: error.cause instanceof Error ? {
-      name: error.cause.name,
-      message: error.cause.message,
-      stack: error.cause.stack
-    } : error.cause,
+    cause: error.cause instanceof Error
+      ? {
+        name: error.cause.name,
+        message: error.cause.message,
+        stack: error.cause.stack,
+      }
+      : error.cause,
     ...('operation' in error ? { operation: error.operation } : {}),
     ...('service' in error ? { service: error.service } : {}),
     ...('path' in error ? { path: error.path } : {}),
     ...('stage' in error ? { stage: error.stage } : {}),
-    ...('phase' in error ? { phase: error.phase } : {})
+    ...('phase' in error ? { phase: error.phase } : {}),
   }
 }
 
@@ -447,9 +449,9 @@ export const serializeError = (error: VibeError): Record<string, unknown> => {
 export const formatErrorForUser = (error: VibeError): string => {
   const severity = getErrorSeverity(error)
   const emoji = severity === 'critical' ? '💥' : severity === 'high' ? '❌' : '⚠️'
-  
+
   let message = `${emoji} ${error.message}`
-  
+
   // Add context-specific information
   switch (error._tag) {
     case 'StorageError':
@@ -478,7 +480,7 @@ export const formatErrorForUser = (error: VibeError): string => {
       }
       break
   }
-  
+
   return message
 }
 
@@ -489,7 +491,7 @@ export const handleError = (error: VibeError, context?: string): void => {
   const severity = getErrorSeverity(error)
   const strategy = getRecoveryStrategy(error)
   const serialized = serializeError(error)
-  
+
   // Log error based on severity
   if (severity === 'critical') {
     logSystem.error(`${context || 'Error'}: ${error.message}`)
@@ -498,7 +500,7 @@ export const handleError = (error: VibeError, context?: string): void => {
   } else {
     logSystem.debug(`${context || 'Warning'}: ${error.message}`)
   }
-  
+
   // Suggest recovery strategy
   if (strategy === 'retry') {
     logSystem.info('This error may be retryable. Consider retrying the operation.')
@@ -516,8 +518,27 @@ export const chainError = (originalError: VibeError, newError: VibeError): VibeE
     cause: originalError,
     context: {
       ...newError.context,
-      chainedFrom: originalError._tag
-    }
+      chainedFrom: originalError._tag,
+    },
+  }
+}
+
+/**
+ * Create an error collector for batch operations with consistent error handling
+ */
+export const createErrorCollector = (context: string = 'Operation') => {
+  const errors: string[] = []
+
+  return {
+    add: (error: string) => errors.push(error),
+    addVibe: (vibeError: VibeError) => {
+      handleError(vibeError, context)
+      errors.push(vibeError.message)
+    },
+    getAll: () => [...errors],
+    length: () => errors.length,
+    hasErrors: () => errors.length > 0,
+    getSummary: () => `${errors.length} errors in ${context}`,
   }
 }
 
@@ -534,7 +555,7 @@ export const ErrorUtils = {
     validation: createValidationError,
     treesitter: createTreeSitterError,
     agent: createAgentError,
-    workspace: createWorkspaceError
+    workspace: createWorkspaceError,
   },
   severity: getErrorSeverity,
   recovery: getRecoveryStrategy,
@@ -542,5 +563,6 @@ export const ErrorUtils = {
   serialize: serializeError,
   format: formatErrorForUser,
   handle: handleError,
-  chain: chainError
+  chain: chainError,
+  collector: createErrorCollector,
 } as const

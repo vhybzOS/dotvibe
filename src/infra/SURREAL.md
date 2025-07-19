@@ -361,6 +361,237 @@ const query = `
 - [SurrealQL Operators](https://surrealdb.com/docs/surrealql/operators)
 - [Data Casting](https://surrealdb.com/docs/surrealql/datamodel/casting)
 
+## 🔍 **Advanced Patterns from Codebase Analysis**
+
+### **Higher-Order Function Pattern for Database Operations**
+```typescript
+// Pattern: withDatabase HOF for consistent connection management
+export const withDatabase = <T>(operation: (db: Surreal) => Promise<T>): Effect.Effect<T, VibeError> => {
+  return pipe(
+    Effect.tryPromise({
+      try: async () => {
+        const db = new Surreal()
+        await db.connect(config.database.url)
+        await db.use({ namespace: config.database.namespace, database: config.database.database })
+        
+        const result = await operation(db)
+        await db.close()
+        return result
+      },
+      catch: (error) => createStorageError(error, 'withDatabase', 'Database operation failed')
+    })
+  )
+}
+
+// Usage: All database operations use this pattern
+const result = await Effect.runPromise(
+  withDatabase(db => db.query('SELECT * FROM code_elements'))
+)
+```
+
+### **Hybrid ID Generation for Cross-Module References**
+```typescript
+// Pattern: Different ID schemes for internal vs external elements
+const generateStorageElementId = (filePath: string, elementName: string, node?: any): string => {
+  // For import statements: use resolved module:element format
+  if (node?.type === 'import_statement') {
+    const moduleName = extractModuleName(node)
+    if (moduleName) {
+      const resolvedModuleName = resolveImportPath(moduleName, filePath)
+      return `${resolvedModuleName}:${elementName}` // external reference
+    }
+  }
+  
+  // For internal elements: use filePath:elementName format
+  return `${filePath}:${elementName}` // internal reference
+}
+```
+
+### **Import-Aware Element Extraction**
+```typescript
+// Pattern: Special handling for import statements to create multiple elements
+if (node.type === 'import_statement') {
+  const importedNames = extractImportNames(node) // ['Parser', 'Language', 'Query']
+  const moduleName = extractModuleName(node)     // 'web-tree-sitter'
+  
+  // Create separate element for each imported name
+  for (const importedName of importedNames) {
+    const element = extractElementFromNodeWithName(node, lines, content, filePath, importedName)
+    // Results in: web-tree-sitter:Parser, web-tree-sitter:Language, web-tree-sitter:Query
+  }
+}
+```
+
+### **Tree-sitter Query-Based Data Flow Analysis**
+```typescript
+// Pattern: Using tree-sitter queries instead of AST walking for better performance
+const analyzeDataFlowSync = async (parseResult: ParseResult): Promise<DataFlowRelationshipData[]> => {
+  const language = cached.language
+  const query = new Query(language, LANGUAGE_CONFIGS.typescript.queries.dataflow)
+  const matches = query.matches(parseResult.tree.rootNode)
+  
+  // Query pattern example:
+  dataflow: `
+    ; Variable assignments (const config = DEFAULT_ERROR_CONFIG)
+    (variable_declarator 
+      name: (identifier) @var_name 
+      value: (identifier) @var_value) @variable_assignment
+    
+    ; Property access (config.maxRetries)
+    (member_expression 
+      object: (identifier) @object 
+      property: (property_identifier) @property) @property_access
+  `
+}
+```
+
+### **Configuration-Driven Language Support**
+```typescript
+// Pattern: Unified configuration for all supported languages
+export const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
+  typescript: {
+    name: 'typescript',
+    extensions: ['.ts', '.tsx', '.js', '.jsx'], // Unified: TS parser handles JS too
+    wasmFile: 'tree-sitter-typescript.wasm',
+    queries: {
+      symbols: `...`,    // Element extraction queries
+      imports: `...`,    // Import detection queries  
+      exports: `...`,    // Export detection queries
+      comments: `...`,   // Comment extraction queries
+      dataflow: `...`    // Data flow analysis queries
+    }
+  }
+}
+```
+
+### **Effect-TS Error Handling with Tagged Unions**
+```typescript
+// Pattern: Structured error handling throughout storage operations
+export type VibeError = 
+  | StorageError 
+  | ConfigError 
+  | ProcessingError 
+  | NetworkError
+
+// Usage in database operations
+const createRecord = (data: any): Effect.Effect<any, VibeError> => {
+  return pipe(
+    withDatabase(db => db.create('code_elements', data)),
+    Effect.catchAll(error => {
+      if (error._tag === 'StorageError') {
+        return Effect.fail(createProcessingError(error, 'create', 'Failed to create record'))
+      }
+      return Effect.fail(error)
+    })
+  )
+}
+```
+
+### **Development vs Production Mode Detection**
+```typescript
+// Pattern: Runtime environment detection for WASM file resolution
+export const resolveWasmPath = async (language: string): Promise<string> => {
+  const isCompiled = !import.meta.url.startsWith('file:///')
+  
+  if (isCompiled) {
+    // Production: Look for installer-provided WASM files
+    const dataPath = `./data/${config.wasmFile}`
+  } else {
+    // Development: Use Deno's npm cache
+    const cacheBase = `${Deno.env.get('HOME')}/.cache/deno/npm/registry.npmjs.org`
+  }
+}
+```
+
+### **Batch Operations with Concurrency Control**
+```typescript
+// Pattern: Efficient batch processing with controlled concurrency
+const processBatch = async (items: any[], batchSize = 100): Effect.Effect<any[], VibeError> => {
+  return pipe(
+    Effect.forEach(
+      chunk(items, batchSize),
+      batch => withDatabase(db => 
+        Promise.all(batch.map(item => db.create('table', item)))
+      ),
+      { concurrency: 3 } // Process 3 batches concurrently
+    ),
+    Effect.map(batches => batches.flat())
+  )
+}
+```
+
+### **Smart Deduplication with Priority-Based Selection**
+```typescript
+// Pattern: Intelligent deduplication based on element type priority
+const elementMap = new Map<string, CodeElementData>()
+
+for (const element of elements) {
+  const key = `${element.file_path}:${element.element_name}`
+  const existing = elementMap.get(key)
+  
+  if (!existing) {
+    elementMap.set(key, element)
+  } else {
+    // Prefer exports over other types for the same element
+    const preferenceOrder = ['export', 'function', 'class', 'interface', 'type', 'variable', 'import']
+    const existingPref = preferenceOrder.indexOf(existing.element_type)
+    const currentPref = preferenceOrder.indexOf(element.element_type)
+    
+    if (currentPref < existingPref) {
+      elementMap.set(key, element) // Replace with higher priority element
+    }
+  }
+}
+```
+
+### **SurrealDB Parameterized Query Pattern**
+```typescript
+// Pattern: Always use parameterized queries for security and performance
+const searchElements = (searchTerm: string): Effect.Effect<any[], VibeError> => {
+  return withDatabase(async db => {
+    // ✅ Good: Parameterized query
+    const [result] = await db.query(`
+      SELECT * FROM code_elements 
+      WHERE element_name ~ $searchPattern 
+      OR search_phrases && [$searchTerm]
+      ORDER BY similarity::cosine(content_embedding, $embedding) DESC
+    `, {
+      searchPattern: `.*${searchTerm}.*`,
+      searchTerm,
+      embedding: await generateEmbedding(searchTerm)
+    })
+    
+    return result
+  })
+}
+```
+
+## 🚀 **Performance Patterns**
+
+### **Semantic Search with Vector Similarity**
+```surrealql
+-- Pattern: Combining text search with vector similarity
+SELECT *, 
+  similarity::cosine(content_embedding, $query_embedding) as similarity_score,
+  search_phrases
+FROM code_elements 
+WHERE element_name ~ $name_pattern 
+  OR search_phrases && $search_terms
+ORDER BY similarity_score DESC 
+LIMIT 10;
+```
+
+### **Graph Traversal with Filtered Relationships**
+```surrealql
+-- Pattern: Efficient relationship traversal with filtering
+SELECT `to` as dependency 
+FROM structural_relationship 
+WHERE `from` ~ $file_pattern 
+  AND `to` !~ $file_pattern  -- External dependencies only
+  AND relationship_type = 'imports'
+  AND complexity_score < $max_complexity;
+```
+
 ---
 
-**Key Takeaway**: SurrealDB uses different syntax than traditional SQL. Reserved keywords must be escaped, LIKE is not supported (use regex `~`), and graph traversal has specific operators. Always refer to this guide when writing queries for the storage system.
+**Key Takeaway**: SurrealDB uses different syntax than traditional SQL. Reserved keywords must be escaped, LIKE is not supported (use regex `~`), and graph traversal has specific operators. The codebase demonstrates advanced patterns for Effect-TS integration, hybrid ID schemes, and performance-optimized queries. Always refer to this guide when writing queries for the storage system.
