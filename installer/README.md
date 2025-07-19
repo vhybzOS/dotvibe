@@ -1,26 +1,39 @@
 # Dotvibe Installer Architecture
 
-Complete distribution system for dotvibe with version-locked dependencies and cross-platform support.
+Modern, non-intrusive distribution system with privilege-aware installation and cross-platform binary downloads.
 
 ## 🏗️ Architecture Overview
 
-The dotvibe distribution uses a **hybrid approach**:
-1. **Self-contained Deno executable** with bundled documentation
-2. **Go installer** that handles all system dependencies and runtime assets
+The dotvibe distribution uses a **two-installer approach**:
+1. **Privilege Detector** - Detects permissions and handles elevation
+2. **Binary Installer** - Downloads platform-specific binaries directly (no toolchain installation)
 
-### Distribution Flow
+### Installation Flow
 
 ```mermaid
 graph TD
-    A[User downloads installer] --> B[Go installer runs]
-    B --> C[Check/Install Rust+Cargo]
-    C --> D[Install code2prompt v3.0.2]
-    D --> E[Install surrealdb v2.3.5]
-    E --> F[Download tree-sitter WASM]
-    F --> G[Download vibe executable]
-    G --> H[Install to ~/.local/bin/]
-    H --> I[Verify all components]
-    I --> J[✅ Ready to use]
+    A[User downloads installer] --> B[Privilege Detector runs]
+    B --> C{Has admin privileges?}
+    C -->|Yes| D[Ask: Install for all users?]
+    C -->|No| E[Ask: Install for current user?]
+    D -->|Yes| F[Elevate privileges]
+    D -->|No| G[Run user install]
+    E -->|Yes| G
+    F --> H[Run system install]
+    G --> I[Download platform binaries]
+    H --> I
+    I --> J[Download vibe binary]
+    I --> K[Download surreal binary]
+    I --> L[Download code2prompt binary]
+    I --> M[Download tree-sitter WASM]
+    J --> N[Install to proper paths]
+    K --> N
+    L --> N
+    M --> N
+    N --> O[Create symlinks]
+    O --> P[Update PATH]
+    P --> Q[Verify all components]
+    Q --> R[✅ Ready to use]
 ```
 
 ## 📁 File Architecture
@@ -29,39 +42,46 @@ graph TD
 
 | File | Purpose | Dependencies |
 |------|---------|--------------|
-| [`main.go`](./main.go) | Main installer logic, GitHub releases, binary installation | Uses modules.go functions |
-| [`modules.go`](./modules.go) | **Version-locked dependency management** | All external deps (Rust, cargo packages, WASM) |
+| [`elevate.go`](./elevate.go) | **Privilege detector and elevator** | Handles admin detection and elevation |
+| [`main.go`](./main.go) | **Binary installer logic** | Downloads platform-specific binaries |
+| [`paths.go`](./paths.go) | **Cross-platform path management** | System vs user install paths |
 | [`Taskfile.yml`](./Taskfile.yml) | Build automation for cross-platform installers | Reads version from ../deno.json |
 
 ### Deno Project Files
 
 | File | Purpose | Role in Installation |
 |------|---------|---------------------|
-| [`../src/infra/ast.ts`](../src/infra/ast.ts) | AST parsing with WASM file resolution | Looks for `data/tree-sitter-typescript.wasm` |
+| [`../src/infra/ast.ts`](../src/infra/ast.ts) | AST parsing with WASM file resolution | Looks for proper data directory |
 | [`../data/README.md`](../data/README.md) | Documentation bundled with executable | Included in compiled binary |
 | [`../deno.json`](../deno.json) | Build configuration | Defines version, includes data/ directory |
 | [`../scripts/build-all-platforms.sh`](../scripts/build-all-platforms.sh) | Cross-platform Deno builds | Creates platform-specific executables |
 
 ## 🔐 Version Lock System
 
-All dependencies are locked in [`modules.go`](./modules.go):
+All dependencies are locked with SHA256 checksums in [`main.go`](./main.go):
 
 ```go
 const (
-    CODE2PROMPT_VERSION    = "3.0.2"     // CLI tool for code extraction
+    CODE2PROMPT_VERSION    = "3.0.3"     // CLI tool for code extraction  
     SURREALDB_VERSION      = "2.3.5"     // Database system
     TREE_SITTER_TS_VERSION = "0.23.2"    // TypeScript/JavaScript parser
+    
+    // SHA256 checksums for security validation
+    CODE2PROMPT_SHA256_LINUX   = "527c4c27e260e9ea3123c4a1e5d5d7734954543705945306c67b3018ca16bd34"
+    CODE2PROMPT_SHA256_MACOS   = "deb28f718e550089eebad9110564776494d172b72acb95befff5fc6dcaba9e5e"
+    CODE2PROMPT_SHA256_WINDOWS = "b09fb5d0fda5b40097f1df1762103024097847e871b3d8b3eae1e361e03064a1"
 )
 ```
 
-### Why Version Locking?
+### Why Version Locking + Checksums?
 - **Reproducible builds**: Same versions across all installations
-- **Compatibility guarantee**: Tested combinations that work together
-- **Security**: No surprise updates that could break functionality
+- **Compatibility guarantee**: Tested combinations that work together  
+- **Security**: SHA256 validation prevents tampering
+- **No toolchain pollution**: Direct binary downloads only
 
 ## 🚀 Installation Process
 
-### 1. Pre-Installation
+### 1. Download and Run
 ```bash
 # User downloads platform-specific installer
 curl -L https://github.com/vhybzOS/dotvibe/releases/latest/download/install-dotvibe-linux-x86_64 -o install-dotvibe
@@ -69,33 +89,54 @@ chmod +x install-dotvibe
 ./install-dotvibe
 ```
 
-### 2. Dependency Installation (modules.go)
+### 2. Privilege Detection and User Choice
+- **Detect current privileges** (admin/user)
+- **Ask user**: "Install for all users (system) or current user only?"
+- **Handle elevation**: If system install chosen, elevate privileges appropriately
 
-#### Rust Toolchain
-- **Check**: `cargo --version`
-- **Install**: Via https://rustup.rs (cross-platform)
-- **Verify**: Ensures cargo is available
+### 3. Direct Binary Downloads (No Toolchain Installation!)
 
-#### Cargo Packages
+#### Platform-Specific Binaries
 ```bash
-cargo install code2prompt --version 3.0.2
-cargo install surrealdb --version 2.3.5
+# SurrealDB from official releases
+https://download.surrealdb.com/v2.3.5/surreal-v2.3.5.{os}-{arch}{.ext}
+
+# code2prompt from our fork (includes Windows!)
+https://github.com/vhybzOS/code2prompt/releases/download/v3.0.3/code2prompt-{target}{.exe}
+
+# Tree-sitter WASM
+https://unpkg.com/tree-sitter-typescript@0.23.2/tree-sitter-typescript.wasm
+
+# Vibe executable
+https://github.com/vhybzOS/dotvibe/releases/download/{version}/vibe-{version}-{os}-{arch}{.exe}
 ```
 
-#### WASM Runtime Asset
-- **Download**: `https://unpkg.com/tree-sitter-typescript@0.23.2/tree-sitter-typescript.wasm`
-- **Install to**: `~/.local/bin/data/tree-sitter-typescript.wasm`
-- **Purpose**: TypeScript/JavaScript AST parsing for vibe
+#### SHA256 Validation
+- **Verify checksums** of all downloaded binaries
+- **Fail installation** if any checksum mismatch detected
+- **Security**: Prevents tampering and corruption
 
-### 3. Main Binary Installation
-- **Download**: Platform-specific vibe executable from GitHub releases
-- **Install to**: `~/.local/bin/vibe`
-- **Permissions**: Executable (chmod 755)
+### 4. Smart Installation Paths
 
-### 4. Verification
-- **Binary check**: `vibe --version`
-- **Dependencies**: Verify code2prompt and surreal commands work
-- **Integration**: Ensure all components can communicate
+#### System Installation (with admin privileges)
+- **Binaries**: `/usr/local/bin/` (Unix) or `C:\Program Files\dotvibe\bin\` (Windows)
+- **Data**: `/usr/local/share/dotvibe/` (Unix) or `C:\Program Files\dotvibe\data\` (Windows)
+- **Available to**: All users on system
+
+#### User Installation (no admin needed)
+- **Binaries**: `~/.local/bin/` (Unix) or `%APPDATA%\dotvibe\bin\` (Windows)  
+- **Data**: `~/.local/share/dotvibe/` (Unix) or `%APPDATA%\dotvibe\data\` (Windows)
+- **Available to**: Current user only
+
+### 5. Symlink Strategy and PATH Management
+- **Create symlinks**: Point to versioned binaries for easy updates
+- **Update PATH**: Add binary directory to user/system PATH
+- **Shell integration**: Update profile files (.bashrc, .zshrc, PowerShell profile)
+
+### 6. Verification and Uninstall Support
+- **Binary check**: `vibe --version`, `surreal version`, `code2prompt --version`
+- **Integration test**: Ensure WASM files are accessible
+- **Uninstall support**: `./install-dotvibe --uninstall` removes everything cleanly
 
 ## 📦 Build Artifacts
 
@@ -160,18 +201,26 @@ const fallbackPath = `${executableDir}../data/tree-sitter-typescript.wasm`
 
 ## 🎯 Installation Locations
 
-### User Installation Paths
+### System Installation Paths (Admin Required)
 
 | Component | Linux/macOS | Windows | Purpose |
 |-----------|-------------|---------|---------|
-| **vibe executable** | `~/.local/bin/vibe` | `%USERPROFILE%\.local\bin\vibe.exe` | Main CLI tool |
-| **WASM file** | `~/.local/bin/data/tree-sitter-typescript.wasm` | `%USERPROFILE%\.local\bin\data\tree-sitter-typescript.wasm` | AST parsing |
-| **cargo packages** | `~/.cargo/bin/` | `%USERPROFILE%\.cargo\bin\` | code2prompt, surreal |
+| **Binaries** | `/usr/local/bin/` | `C:\Program Files\dotvibe\bin\` | vibe, surreal, code2prompt |
+| **Data** | `/usr/local/share/dotvibe/` | `C:\Program Files\dotvibe\data\` | WASM files, configs |
+| **Symlinks** | `/usr/local/bin/vibe` → versioned binary | Copy (no symlink complexity) | Version management |
+
+### User Installation Paths (No Admin Required)
+
+| Component | Linux/macOS | Windows | Purpose |
+|-----------|-------------|---------|---------|
+| **Binaries** | `~/.local/bin/` | `%APPDATA%\dotvibe\bin\` | vibe, surreal, code2prompt |
+| **Data** | `~/.local/share/dotvibe/` | `%APPDATA%\dotvibe\data\` | WASM files, configs |
+| **Symlinks** | `~/.local/bin/vibe` → versioned binary | Copy (no symlink complexity) | Version management |
 
 ### System Requirements
-- **Disk space**: ~50MB total
-- **Network**: Required for initial download
-- **Permissions**: User directory write access
+- **Disk space**: ~50MB total (no Rust toolchain!)
+- **Network**: Required for initial download only
+- **Permissions**: User directory OR admin privileges (user's choice)
 
 ## 🔧 Development & Testing
 
@@ -181,37 +230,44 @@ If you want to contribute to the installer module, you'll need:
 - **Go**: Install from https://go.dev/doc/install  
 - **Task**: Install from https://taskfile.dev/installation
 
-Once you have Go and Task installed, the installer can handle the rest of the dependencies for you! Just build and run it:
+Development is now much simpler - no Rust toolchain required! Just build and run:
 
 ```bash
 cd installer
 task build
-./install-dotvibe
+./install-dotvibe --help  # See available options
 ```
 
-This will set up Rust, cargo packages, and WASM files automatically. This makes contributing easy - you only need the basic development tools, and the installer bootstraps everything else. 😊
+The installer now downloads pre-built binaries instead of building from source, making development much faster and more reliable. 🚀
 
 ### Local Testing
 ```bash
 # Build installer
 cd installer && task build
 
-# Test installation (dry run)
-./install-dotvibe --help
+# Test user installation
+./install-dotvibe --user
+
+# Test system installation  
+sudo ./install-dotvibe --system
+
+# Test uninstallation
+./install-dotvibe --uninstall
 
 # Build Deno executable
 deno task build
 
-# Test AST parsing
-deno run --allow-all src/infra/ast.ts parse-file src/cli.ts
+# Test integration
+vibe --version && surreal version && code2prompt --version
 ```
 
 ### Adding New Dependencies
 
-1. **Update version constants** in [`modules.go`](./modules.go)
-2. **Add installation logic** to `installAllModules()`
-3. **Add verification** to `verifyAllModules()`
-4. **Test cross-platform** with `task build:all`
+1. **Update version constants** in [`main.go`](./main.go)
+2. **Add SHA256 checksums** for security validation
+3. **Update download URLs** in binary fetching logic
+4. **Add verification** to post-install checks
+5. **Test cross-platform** with `task build:all`
 
 ## 🚨 Error Handling
 
@@ -219,10 +275,10 @@ deno run --allow-all src/infra/ast.ts parse-file src/cli.ts
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Rust/Cargo not found` | Missing toolchain | Installer auto-installs via rustup |
-| `cargo install failed` | Network/permissions | Retry with verbose output |
-| `WASM download failed` | Network/CDN issue | Retry from unpkg.com |
-| `Permission denied` | Install path restricted | Use different install directory |
+| `Permission denied` | Insufficient privileges | Run with sudo for system install or choose user install |
+| `Checksum mismatch` | Corrupted download/tampering | Re-download binary and validate |
+| `Binary download failed` | Network/GitHub issue | Retry with verbose output |
+| `PATH update failed` | Shell profile permissions | Manually add binary directory to PATH |
 
 ### Debug Mode
 ```bash
@@ -230,9 +286,23 @@ deno run --allow-all src/infra/ast.ts parse-file src/cli.ts
 ./install-dotvibe --verbose
 
 # Manual verification
-code2prompt --version
+vibe --version
 surreal version  
-ls -la ~/.local/bin/data/
+code2prompt --version
+ls -la ~/.local/share/dotvibe/  # User install
+ls -la /usr/local/share/dotvibe/  # System install
+```
+
+### Uninstall Support
+```bash
+# Clean removal of all components
+./install-dotvibe --uninstall
+
+# Removes:
+# - All binaries (vibe, surreal, code2prompt)
+# - Data directory and WASM files
+# - PATH entries from shell profiles
+# - Symlinks (Unix) or copied files (Windows)
 ```
 
 ## 📊 Success Metrics
@@ -244,24 +314,35 @@ After successful installation, users see:
 🎉 Try: vibe --version
 
 📦 Installed components:
-   • code2prompt: v3.0.2
+   • vibe: v0.7.27
+   • code2prompt: v3.0.3
    • surrealdb: v2.3.5  
    • tree-sitter-typescript: v0.23.2
+
+📍 Installation type: System (available to all users)
+📁 Install location: /usr/local/bin/
+📊 Total disk usage: ~45MB
 ```
 
 ## 🔄 Update Strategy
 
 ### Version Bumps
-1. **Update constants** in modules.go
-2. **Test compatibility** across platforms
-3. **Update documentation** 
-4. **Release new installers**
+1. **Update constants** in main.go with new versions and checksums
+2. **Test compatibility** across all platforms
+3. **Update documentation** and examples
+4. **Release new installers** with automated builds
 
 ### Backward Compatibility
 - **WASM API**: Maintained across tree-sitter versions
-- **CLI interfaces**: Stable command signatures
-- **File paths**: Consistent installation locations
+- **CLI interfaces**: Stable command signatures  
+- **Installation paths**: Consistent across versions
+- **Symlink strategy**: Enables seamless version switching
+
+### Migration Support
+- **Detect old installations** and offer to upgrade
+- **Preserve user data** during upgrades
+- **Clear migration path** from Rust-based to binary-based installs
 
 ---
 
-This installer architecture ensures reliable, reproducible installations across all supported platforms while maintaining clean separation between build-time bundling and runtime dependency management.
+This modern installer architecture provides a **non-intrusive, privilege-aware, and secure** distribution system that respects user choice while delivering a clean installation experience across all supported platforms.
