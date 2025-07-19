@@ -17,7 +17,7 @@
 import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
 import Surreal from 'surrealdb'
-import { createStorageError, createProcessingError, type VibeError } from './errors.ts'
+import { createStorageError, createProcessingError, createConfigurationError, handleError, createErrorCollector, type VibeError } from './errors.ts'
 import { generateSingleEmbedding } from './embeddings.ts'
 import { logStorage, debugOnly } from './logger.ts'
 import { parseFileWithRelationships, type FileParseResult } from './ast.ts'
@@ -137,7 +137,12 @@ export function findProjectRoot(startPath: string = Deno.cwd()): string {
     currentPath = parentPath
   }
   
-  throw new Error(`No .vibe directory found in ${startPath} or any parent directory`)
+  throw createConfigurationError(
+    new Error('Project root not found'),
+    `No .vibe directory found in ${startPath} or any parent directory`,
+    'file',
+    startPath
+  )
 }
 
 /**
@@ -158,7 +163,12 @@ export async function connectToDatabase(projectPath: string): Promise<DatabaseCo
     }
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
-      throw new Error(`SurrealDB server not running in project ${projectPath}. Please run "./vibe start" first.`)
+      throw createStorageError(
+        error,
+        'connect',
+        `SurrealDB server not running in project ${projectPath}. Please run "./vibe start" first.`,
+        projectPath
+      )
     }
     throw error
   }
@@ -235,6 +245,8 @@ export const initializeSchema = (projectPath: string): Effect.Effect<void, VibeE
       DEFINE FIELD resolved ON structural_relationship TYPE bool DEFAULT false;
       DEFINE FIELD target_type ON structural_relationship TYPE string;
       DEFINE FIELD context ON structural_relationship TYPE object;
+      
+      DEFINE INDEX unique_structural_rel ON structural_relationship COLUMNS in, out, relationship_type UNIQUE;
     `)
     
     await db.query(`
@@ -414,32 +426,70 @@ const findContainingFunctionByContent = async (
 }
 
 /**
- * Store relationships using simplified UPSERT + RELATE pattern
+ * Store relationships using PARALLEL batch processing with element lookup caching
  */
 const storeRelationships = async (
   relationships: any[],
   projectPath: string,
   db: DatabaseConnection
 ): Promise<{ stored: number; errors: string[] }> => {
-  let stored = 0
-  const errors: string[] = []
+  const errorCollector = createErrorCollector('Relationship Storage')
   
-  for (const relationship of relationships) {
+  if (relationships.length === 0) {
+    return { stored: 0, errors: [] }
+  }
+  
+  console.log(`DEBUG: Processing ${relationships.length} relationships with parallel batch lookups`)
+  
+  // Step 1: Collect all unique element paths for batch lookup
+  const allPaths = new Set<string>()
+  relationships.forEach(rel => {
+    allPaths.add(rel.from)
+    allPaths.add(rel.to)
+  })
+  
+  console.log(`DEBUG: Batch looking up ${allPaths.size} unique elements`)
+  
+  // Step 2: Batch lookup all elements in parallel
+  const lookupPromises = Array.from(allPaths).map(async (path) => {
+    try {
+      const element = await getExistingElement(path, db)
+      return { path, element, success: true }
+    } catch (error) {
+      return { path, element: null, success: false, error }
+    }
+  })
+  
+  const lookupResults = await Promise.allSettled(lookupPromises)
+  
+  // Create element cache from lookup results
+  const elementCache = new Map<string, any>()
+  lookupResults.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      const { path, element } = result.value
+      elementCache.set(path, element)
+    }
+  })
+  
+  console.log(`DEBUG: Cached ${elementCache.size} elements, processing relationships in parallel`)
+  
+  // Step 3: Process relationships in parallel using cached lookups
+  const relationshipPromises = relationships.map(async (relationship) => {
     try {
       const fromPath = relationship.from
       const toPath = relationship.to
       
       debugOnly(() => logStorage.debug(`Storing relationship: ${fromPath} -> ${toPath}`))
       
-      // Get source record (must exist)
-      const fromRecord = await getExistingElement(fromPath, db)
+      // Get source record from cache
+      const fromRecord = elementCache.get(fromPath)
       if (!fromRecord) {
         debugOnly(() => logStorage.debug(`Skipping relationship ${fromPath} -> ${toPath} - source element missing`))
-        continue
+        return { success: false, reason: 'source_missing' }
       }
       
-      // Get or create target record (create placeholder for missing internal targets)
-      let toRecord = await getExistingElement(toPath, db)
+      // Get or create target record
+      let toRecord = elementCache.get(toPath)
       if (!toRecord && relationship.target_type === 'internal') {
         // Create placeholder for missing internal target
         const [filePath, elementName] = toPath.split(':')
@@ -447,7 +497,7 @@ const storeRelationships = async (
         if (elementName && elementName !== 'module' && isSemanticElementName(elementName)) {
           console.log(`DEBUG: Creating on-demand placeholder for relationship target: ${elementName}`)
           
-          const placeholderResult = await db.query(`
+          await db.query(`
             UPSERT code_elements CONTENT {
               element_path: $elementPath,
               file_path: $filePath,
@@ -466,69 +516,138 @@ const storeRelationships = async (
             content: `// Placeholder: Referenced but not extracted - ${elementName}`
           })
           
-          // Get the created placeholder record
+          // Get the created placeholder record and update cache
           toRecord = await getExistingElement(toPath, db)
+          elementCache.set(toPath, toRecord)
         }
       }
       
       if (!toRecord) {
         debugOnly(() => logStorage.debug(`Skipping relationship ${fromPath} -> ${toPath} - target element missing and not internal`))
-        continue
+        return { success: false, reason: 'target_missing' }
       }
       
       // Use RELATE with actual record IDs
-      await db.query(`
-        RELATE $fromId -> structural_relationship -> $toId
-        SET relationship_type = $relationshipType,
-            resolved = $resolved,
-            target_type = $targetType,
-            context = $context
-      `, {
-        fromId: fromRecord.id,
-        toId: toRecord.id,
-        relationshipType: relationship.relationship_type,
-        resolved: relationship.resolved,
-        targetType: relationship.target_type,
-        context: relationship.context || {}
-      })
-      
-      stored++
+      try {
+        await db.query(`
+          RELATE $fromId -> structural_relationship -> $toId
+          SET relationship_type = $relationshipType,
+              resolved = $resolved,
+              target_type = $targetType,
+              context = $context
+        `, {
+          fromId: fromRecord.id,
+          toId: toRecord.id,
+          relationshipType: relationship.relationship_type,
+          resolved: relationship.resolved,
+          targetType: relationship.target_type,
+          context: relationship.context || {}
+        })
+        
+        return { success: true }
+      } catch (error) {
+        if (error.message.includes('unique') || error.message.includes('already exists')) {
+          console.log(`DEBUG: Relationship already exists: ${relationship.from} -> ${relationship.to}`)
+          return { success: true } // Treat as success - relationship exists
+        } else {
+          throw error // Re-throw other errors
+        }
+      }
     } catch (error) {
-      const errorMsg = `Failed to store relationship ${relationship.from} -> ${relationship.to}: ${error}`
-      errors.push(errorMsg)
-      debugOnly(() => logStorage.debug(errorMsg))
+      const vibeError = createStorageError(error, 'upsert', `Failed to store relationship`, `${relationship.from}->${relationship.to}`)
+      handleError(vibeError, 'Relationship Storage')
+      return { success: false, error: vibeError.message }
     }
-  }
+  })
   
-  return { stored, errors }
+  // Wait for all relationship operations to complete
+  const relationshipResults = await Promise.allSettled(relationshipPromises)
+  
+  // Count successful relationships and collect errors
+  let stored = 0
+  relationshipResults.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      const outcome = result.value
+      if (outcome.success) {
+        stored++
+      } else if (outcome.error) {
+        errorCollector.add(outcome.error)
+      }
+    } else {
+      const relationship = relationships[index]
+      errorCollector.add(`Promise rejected for relationship ${relationship.from} -> ${relationship.to}: ${result.reason}`)
+    }
+  })
+  
+  console.log(`DEBUG: Stored ${stored}/${relationships.length} relationships successfully`)
+  
+  return { stored, errors: errorCollector.getAll() }
 }
 
 /**
- * Store data flows using simplified UPSERT + RELATE pattern
+ * Store data flows using PARALLEL batch processing with smart element resolution caching
  */
 const storeDataFlows = async (
   dataFlows: any[],
   projectPath: string,
   db: DatabaseConnection
 ): Promise<{ stored: number; errors: string[] }> => {
-  let stored = 0
-  const errors: string[] = []
+  const errorCollector = createErrorCollector('Data Flow Storage')
   
-  for (const dataFlow of dataFlows) {
+  if (dataFlows.length === 0) {
+    return { stored: 0, errors: [] }
+  }
+  
+  console.log(`DEBUG: Processing ${dataFlows.length} data flows with parallel smart resolution`)
+  
+  // Step 1: Collect all unique element paths for batch resolution
+  const allPaths = new Set<string>()
+  dataFlows.forEach(flow => {
+    allPaths.add(flow.from)
+    allPaths.add(flow.to)
+  })
+  
+  console.log(`DEBUG: Batch resolving ${allPaths.size} unique data flow elements`)
+  
+  // Step 2: Batch resolve all elements in parallel using smart resolution
+  const resolutionPromises = Array.from(allPaths).map(async (path) => {
+    try {
+      const element = await resolveDataFlowElement(path, db)
+      return { path, element, success: true }
+    } catch (error) {
+      return { path, element: null, success: false, error }
+    }
+  })
+  
+  const resolutionResults = await Promise.allSettled(resolutionPromises)
+  
+  // Create element cache from resolution results
+  const elementCache = new Map<string, any>()
+  resolutionResults.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      const { path, element } = result.value
+      elementCache.set(path, element)
+    }
+  })
+  
+  console.log(`DEBUG: Resolved ${elementCache.size} data flow elements, processing flows in parallel`)
+  
+  // Step 3: Process data flows in parallel using cached resolutions
+  const dataFlowPromises = dataFlows.map(async (dataFlow) => {
     try {
       const fromPath = dataFlow.from
       const toPath = dataFlow.to
       
       debugOnly(() => logStorage.debug(`Storing data flow: ${fromPath} -> ${toPath}`))
       
-      // Smart resolution - try to resolve to semantic elements
-      const fromRecord = await resolveDataFlowElement(fromPath, db)
-      const toRecord = await resolveDataFlowElement(toPath, db)
+      // Get resolved elements from cache
+      const fromRecord = elementCache.get(fromPath)
+      const toRecord = elementCache.get(toPath)
       
       if (!fromRecord || !toRecord) {
         // Skip data flows where either end doesn't exist
         debugOnly(() => logStorage.debug(`Skipping data flow ${fromPath} -> ${toPath} - missing element(s)`))
-        continue
+        return { success: false, reason: 'missing_elements' }
       }
       
       // Use RELATE with actual record IDs
@@ -543,15 +662,36 @@ const storeDataFlows = async (
         flowMetadata: dataFlow.flow_metadata || {}
       })
       
-      stored++
+      return { success: true }
     } catch (error) {
-      const errorMsg = `Failed to store data flow ${dataFlow.from} -> ${dataFlow.to}: ${error}`
-      errors.push(errorMsg)
-      debugOnly(() => logStorage.debug(errorMsg))
+      const vibeError = createStorageError(error, 'upsert', `Failed to store data flow`, `${dataFlow.from}->${dataFlow.to}`)
+      handleError(vibeError, 'Data Flow Storage')
+      return { success: false, error: vibeError.message }
     }
-  }
+  })
   
-  return { stored, errors }
+  // Wait for all data flow operations to complete
+  const dataFlowResults = await Promise.allSettled(dataFlowPromises)
+  
+  // Count successful data flows and collect errors
+  let stored = 0
+  dataFlowResults.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      const outcome = result.value
+      if (outcome.success) {
+        stored++
+      } else if (outcome.error) {
+        errorCollector.add(outcome.error)
+      }
+    } else {
+      const dataFlow = dataFlows[index]
+      errorCollector.add(`Promise rejected for data flow ${dataFlow.from} -> ${dataFlow.to}: ${result.reason}`)
+    }
+  })
+  
+  console.log(`DEBUG: Stored ${stored}/${dataFlows.length} data flows successfully`)
+  
+  return { stored, errors: errorCollector.getAll() }
 }
 
 
@@ -594,7 +734,7 @@ export const indexFile = (
         let dataFlowsAdded = 0
         let placeholdersCreated = 0
         let relationshipsResolved = 0
-        const errors: string[] = []
+        const errorCollector = createErrorCollector('File Indexing')
         
         // Get existing elements in this file for comparison
         const existingElementsQuery = `
@@ -609,9 +749,11 @@ export const indexFile = (
         // Track which elements we're updating (to know which to remove later)
         const updatedElementPaths = new Set<string>()
         
-        // Store/update elements with granular UPSERT logic
-        console.log(`DEBUG: About to store ${parseResult.elements.length} elements`)
-        for (const element of parseResult.elements) {
+        // Store/update elements with PARALLEL processing for major speedup
+        console.log(`DEBUG: About to store ${parseResult.elements.length} elements in parallel`)
+        
+        // Process all elements in parallel using Promise.allSettled
+        const elementPromises = parseResult.elements.map(async (element) => {
           try {
             const elementPath = element.id // AST generates path-based IDs
             updatedElementPaths.add(elementPath)
@@ -643,7 +785,7 @@ export const indexFile = (
                 })
                 
                 console.log(`DEBUG: Successfully updated placeholder ${element.element_name} to real element`)
-                elementsUpdated++
+                return { type: 'updated', element }
               } else {
                 // UPDATE existing real element with new content (idempotent)
                 console.log(`DEBUG: Updating existing element: ${element.element_name}`)
@@ -664,7 +806,7 @@ export const indexFile = (
                 })
                 
                 console.log(`DEBUG: Successfully updated existing element: ${element.element_name}`)
-                elementsUpdated++
+                return { type: 'updated', element }
               }
             } else {
               // CREATE new element using UPSERT with element_path as key
@@ -692,17 +834,41 @@ export const indexFile = (
               })
               
               console.log(`DEBUG: Successfully created new element: ${element.element_name}`)
-              elementsAdded++
+              return { type: 'added', element }
             }
           } catch (error) {
             console.log(`DEBUG: Failed to store element ${element.element_name}:`, error)
-            errors.push(`Failed to store element ${element.element_name}: ${error.message}`)
+            return { type: 'error', element, error: error.message }
           }
-        }
+        })
         
-        // Remove elements that existed before but are no longer in the parse result
-        for (const existingPath of existingElementPaths) {
-          if (!updatedElementPaths.has(existingPath)) {
+        // Wait for all element operations to complete
+        const elementResults = await Promise.allSettled(elementPromises)
+        
+        // Process results and count outcomes
+        elementResults.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            const outcome = result.value
+            if (outcome.type === 'added') {
+              elementsAdded++
+            } else if (outcome.type === 'updated') {
+              elementsUpdated++
+            } else if (outcome.type === 'error') {
+              errorCollector.add(`Failed to store element ${outcome.element.element_name}: ${outcome.error}`)
+            }
+          } else {
+            const element = parseResult.elements[index]
+            errorCollector.add(`Promise rejected for element ${element.element_name}: ${result.reason}`)
+          }
+        })
+        
+        // Remove elements that existed before but are no longer in the parse result - PARALLEL
+        const elementsToDelete = Array.from(existingElementPaths).filter(path => !updatedElementPaths.has(path))
+        
+        if (elementsToDelete.length > 0) {
+          console.log(`DEBUG: Removing ${elementsToDelete.length} deleted elements in parallel`)
+          
+          const deletePromises = elementsToDelete.map(async (existingPath) => {
             try {
               console.log(`DEBUG: Removing deleted element: ${existingPath}`)
               
@@ -711,13 +877,29 @@ export const indexFile = (
                 elementPath: existingPath
               })
               
-              elementsRemoved++
               console.log(`DEBUG: Successfully removed deleted element: ${existingPath}`)
+              return { success: true, path: existingPath }
             } catch (error) {
               console.log(`DEBUG: Failed to remove element ${existingPath}:`, error)
-              errors.push(`Failed to remove element ${existingPath}: ${error.message}`)
+              return { success: false, path: existingPath, error: error.message }
             }
-          }
+          })
+          
+          const deleteResults = await Promise.allSettled(deletePromises)
+          
+          // Process deletion results
+          deleteResults.forEach((result) => {
+            if (result.status === 'fulfilled') {
+              const outcome = result.value
+              if (outcome.success) {
+                elementsRemoved++
+              } else {
+                errorCollector.add(`Failed to remove element ${outcome.path}: ${outcome.error}`)
+              }
+            } else {
+              errorCollector.add(`Promise rejected for element deletion: ${result.reason}`)
+            }
+          })
         }
         
         // Note: Resolution update moved after placeholder creation for correct timing
@@ -739,6 +921,14 @@ export const indexFile = (
         
         // Store relationships and data flows
         console.log(`DEBUG: About to store ${enhancedRelationships.length} relationships and ${parseResult.dataFlows.length} data flows`)
+        
+        // Clear existing data flows from this file to prevent duplicates
+        console.log(`DEBUG: Clearing existing data flows for file: ${absolutePath}`)
+        await db.query(`
+          DELETE data_flow WHERE 
+          in IN (SELECT id FROM code_elements WHERE file_path = $filePath) OR
+          out IN (SELECT id FROM code_elements WHERE file_path = $filePath)
+        `, { filePath: absolutePath })
         
         const relationshipResults = await storeRelationships(enhancedRelationships, projectPath, db)
         const dataFlowResults = await storeDataFlows(parseResult.dataFlows, projectPath, db)
@@ -767,7 +957,7 @@ export const indexFile = (
           placeholdersCreated,
           relationshipsResolved,
           processingTime,
-          errors
+          errors: errorCollector.getAll()
         }
       })
     )

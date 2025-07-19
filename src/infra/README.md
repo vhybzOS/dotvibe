@@ -269,7 +269,14 @@ deno run --allow-all src/infra/ast.ts parse-file src/infra/storage.ts | jq '[.re
 
 **2. Direct Database Queries**:
 ```bash
-# Connect to SurrealDB CLI
+# Get the dynamic port first (not static!)
+./vibe start
+# ✅ SurrealDB server already running
+#    🌐 Address: 127.0.0.1:4244  <- Use this port
+#    🆔 PID: undefined
+#    📁 Database: .vibe/code.db
+
+# Connect to SurrealDB CLI with the dynamic port
 surreal sql --conn http://127.0.0.1:4244 --user root --pass root --ns vibe --db code
 
 # Check table contents and counts
