@@ -17,10 +17,17 @@
 import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
 import Surreal from 'surrealdb'
-import { createStorageError, createProcessingError, createConfigurationError, handleError, createErrorCollector, type VibeError } from './errors.ts'
+import { createError, createErrorCollector, type VibeError } from './errors.ts'
+import { getCommandVerbose, setCommandVerbose } from './config.ts'
 import { generateSingleEmbedding } from './embeddings.ts'
-import { logStorage, debugOnly } from './logger.ts'
 import { parseFileWithRelationships, type FileParseResult } from './ast.ts'
+
+// Create subsystem-specific error creators
+const storageError = createError('storage')
+const configError = createError('configuration')
+
+// Get verbose setting for this command invocation
+const verbose = getCommandVerbose()
 
 // =============================================================================
 // CORE TYPES & INTERFACES
@@ -137,10 +144,9 @@ export function findProjectRoot(startPath: string = Deno.cwd()): string {
     currentPath = parentPath
   }
   
-  throw createConfigurationError(
-    new Error('Project root not found'),
+  throw configError(
+    'error',
     `No .vibe directory found in ${startPath} or any parent directory`,
-    'file',
     startPath
   )
 }
@@ -163,9 +169,8 @@ export async function connectToDatabase(projectPath: string): Promise<DatabaseCo
     }
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
-      throw createStorageError(
-        error,
-        'connect',
+      throw storageError(
+        'error',
         `SurrealDB server not running in project ${projectPath}. Please run "./vibe start" first.`,
         projectPath
       )
@@ -198,7 +203,7 @@ export const withProjectDatabase = <T>(
           await db.close()
         }
       },
-      catch: (error) => createStorageError(error, 'query', `Database operation failed in project ${projectPath}`)
+      catch: (error) => storageError('error', `Database operation failed in project ${projectPath}`, projectPath, { error })
     })
   )
 }
@@ -210,7 +215,7 @@ export const withProjectDatabase = <T>(
 /**
  * Initialize database schema for project - simplified for SurrealDB natural patterns
  */
-export const initializeSchema = (projectPath: string): Effect.Effect<void, VibeError> => {
+export const initializeSchema = (projectPath: string, verbose: boolean = false): Effect.Effect<void, VibeError> => {
   return withProjectDatabase(projectPath, async (db) => {
     // Drop existing tables if they exist (for clean slate)
     try {
@@ -255,7 +260,7 @@ export const initializeSchema = (projectPath: string): Effect.Effect<void, VibeE
       DEFINE FIELD flow_metadata ON data_flow TYPE object;
     `)
     
-    debugOnly(() => logStorage.debug(`Simplified schema initialized for project: ${projectPath}`))
+    verbose && console.debug(`Schema initialized for project: ${projectPath}`)
   })
 }
 
@@ -479,12 +484,12 @@ const storeRelationships = async (
       const fromPath = relationship.from
       const toPath = relationship.to
       
-      debugOnly(() => logStorage.debug(`Storing relationship: ${fromPath} -> ${toPath}`))
+      verbose && console.debug(`Storing relationship: ${fromPath} -> ${toPath}`)
       
       // Get source record from cache
       const fromRecord = elementCache.get(fromPath)
       if (!fromRecord) {
-        debugOnly(() => logStorage.debug(`Skipping relationship ${fromPath} -> ${toPath} - source element missing`))
+        verbose && console.debug(`Skipping relationship ${fromPath} -> ${toPath} - source element missing`)
         return { success: false, reason: 'source_missing' }
       }
       
@@ -495,7 +500,7 @@ const storeRelationships = async (
         const [filePath, elementName] = toPath.split(':')
         
         if (elementName && elementName !== 'module' && isSemanticElementName(elementName)) {
-          console.log(`DEBUG: Creating on-demand placeholder for relationship target: ${elementName}`)
+          verbose && console.log(`Creating on-demand placeholder for relationship target: ${elementName}`)
           
           await db.query(`
             UPSERT code_elements CONTENT {
@@ -523,7 +528,7 @@ const storeRelationships = async (
       }
       
       if (!toRecord) {
-        debugOnly(() => logStorage.debug(`Skipping relationship ${fromPath} -> ${toPath} - target element missing and not internal`))
+        verbose && console.debug(`Skipping relationship ${fromPath} -> ${toPath} - target element missing and not internal`)
         return { success: false, reason: 'target_missing' }
       }
       
@@ -547,15 +552,14 @@ const storeRelationships = async (
         return { success: true }
       } catch (error) {
         if (error.message.includes('unique') || error.message.includes('already exists')) {
-          console.log(`DEBUG: Relationship already exists: ${relationship.from} -> ${relationship.to}`)
+          verbose && console.log(`Relationship already exists: ${relationship.from} -> ${relationship.to}`)
           return { success: true } // Treat as success - relationship exists
         } else {
           throw error // Re-throw other errors
         }
       }
     } catch (error) {
-      const vibeError = createStorageError(error, 'upsert', `Failed to store relationship`, `${relationship.from}->${relationship.to}`)
-      handleError(vibeError, 'Relationship Storage')
+      const vibeError = storageError('error', `Failed to store relationship`, `${relationship.from}->${relationship.to}`, { error })
       return { success: false, error: vibeError.message }
     }
   })
@@ -579,7 +583,7 @@ const storeRelationships = async (
     }
   })
   
-  console.log(`DEBUG: Stored ${stored}/${relationships.length} relationships successfully`)
+  verbose && console.log(`Stored ${stored}/${relationships.length} relationships successfully`)
   
   return { stored, errors: errorCollector.getAll() }
 }
@@ -638,7 +642,7 @@ const storeDataFlows = async (
       const fromPath = dataFlow.from
       const toPath = dataFlow.to
       
-      debugOnly(() => logStorage.debug(`Storing data flow: ${fromPath} -> ${toPath}`))
+      console.debug(`Storing data flow: ${fromPath} -> ${toPath}`)
       
       // Get resolved elements from cache
       const fromRecord = elementCache.get(fromPath)
@@ -646,7 +650,7 @@ const storeDataFlows = async (
       
       if (!fromRecord || !toRecord) {
         // Skip data flows where either end doesn't exist
-        debugOnly(() => logStorage.debug(`Skipping data flow ${fromPath} -> ${toPath} - missing element(s)`))
+        console.debug(`Skipping data flow ${fromPath} -> ${toPath} - missing element(s)`)
         return { success: false, reason: 'missing_elements' }
       }
       
@@ -664,8 +668,7 @@ const storeDataFlows = async (
       
       return { success: true }
     } catch (error) {
-      const vibeError = createStorageError(error, 'upsert', `Failed to store data flow`, `${dataFlow.from}->${dataFlow.to}`)
-      handleError(vibeError, 'Data Flow Storage')
+      const vibeError = storageError('error', `Failed to store data flow`, `${dataFlow.from}->${dataFlow.to}`, { error })
       return { success: false, error: vibeError.message }
     }
   })
@@ -712,7 +715,7 @@ export const indexFile = (
     // Read file content
     Effect.tryPromise({
       try: () => Deno.readTextFile(resolveProjectPath(filePath, projectPath)),
-      catch: (error) => createStorageError(error, 'read', `Failed to read file: ${filePath}`)
+      catch: (error) => storageError('error', `Failed to read file: ${filePath}`, filePath, { error })
     }),
     
     // Parse with AST analyzer
@@ -945,7 +948,7 @@ export const indexFile = (
         }
         
         const processingTime = Date.now() - startTime
-        debugOnly(() => logStorage.debug(`Indexed ${filePath}: ${elementsAdded} added, ${elementsUpdated} updated, ${elementsRemoved} removed, ${relationshipsAdded} relationships, ${dataFlowsAdded} data flows, ${placeholdersCreated} placeholders, ${relationshipsResolved} resolved in ${processingTime}ms`))
+        console.info(`Indexed ${filePath}: ${elementsAdded} added, ${elementsUpdated} updated, ${elementsRemoved} removed, ${relationshipsAdded} relationships, ${dataFlowsAdded} data flows, ${placeholdersCreated} placeholders, ${relationshipsResolved} resolved in ${processingTime}ms`)
         
         return {
           filePath: absolutePath,
@@ -1160,7 +1163,7 @@ export const findElementCallers = (
       LIMIT $limit
     `
     
-    debugOnly(() => logStorage.debug(`Finding callers for: ${elementPath}`))
+    console.debug(`Finding callers for: ${elementPath}`)
     const results = await db.query(query, { targetId, limit })
     
     return Array.isArray(results) && results.length > 0 ? results[0] : []
@@ -1198,7 +1201,7 @@ export const findElementCallees = (
       LIMIT $limit
     `
     
-    debugOnly(() => logStorage.debug(`Finding callees for: ${elementPath}`))
+    console.debug(`Finding callees for: ${elementPath}`)
     const results = await db.query(query, { sourceId, limit })
     
     return Array.isArray(results) && results.length > 0 ? results[0] : []
@@ -1222,7 +1225,7 @@ export const findFileDependencies = (
       AND relationship_type = 'imports'
     `
     
-    debugOnly(() => logStorage.debug(`Finding dependencies for: ${filePath}`))
+    console.debug(`Finding dependencies for: ${filePath}`)
     const results = await db.query(query, { filePathPattern: `^${absolutePath}` })
     
     const dependencies = Array.isArray(results) && results.length > 0 ? results[0] : []
@@ -1247,7 +1250,7 @@ export const findFileDependents = (
       AND relationship_type = 'imports'
     `
     
-    debugOnly(() => logStorage.debug(`Finding dependents for: ${filePath}`))
+    console.debug(`Finding dependents for: ${filePath}`)
     const results = await db.query(query, { filePathPattern: `^${absolutePath}` })
     
     const dependents = Array.isArray(results) && results.length > 0 ? results[0] : []
@@ -1367,12 +1370,15 @@ if (import.meta.main) {
   const args = Deno.args
   const command = args[0]
   
-  // Parse --project-path flag
+  // Parse flags
   const projectPathArg = args.find(arg => arg.startsWith('--project-path='))
   const projectPath = projectPathArg ? projectPathArg.split('=')[1] : findProjectRoot()
   
+  const verboseFlag = args.includes('--verbose') || args.includes('-v')
+  setCommandVerbose(verboseFlag)
+  
   if (!command) {
-    console.log('Usage: deno run --allow-all src/infra/storage.ts <command> [args] [--project-path=<path>]')
+    console.log('Usage: deno run --allow-all src/infra/storage.ts <command> [args] [options]')
     console.log('Commands:')
     console.log('  init-schema                    - Initialize database schema')
     console.log('  index-file <file>              - Index file to graph database')
@@ -1386,6 +1392,7 @@ if (import.meta.main) {
     console.log('')
     console.log('Options:')
     console.log('  --project-path=<path>          - Specify project root path')
+    console.log('  --verbose, -v                  - Enable verbose output')
     Deno.exit(1)
   }
   

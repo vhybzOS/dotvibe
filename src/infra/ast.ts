@@ -11,8 +11,12 @@
 import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
 import { Parser, Language, Query } from 'web-tree-sitter'
-import { createTreeSitterError, createProcessingError, type VibeError } from './errors.ts'
+import { createError, type VibeError } from './errors.ts'
 import { logSystem } from './logger.ts'
+
+// Create subsystem-specific error creators
+const treeSitterError = createError('treesitter')
+const processingError = createError('processing')
 
 /**
  * Symbol information extracted from AST
@@ -222,11 +226,11 @@ export const initializeParser = async (language: string): Promise<Parser> => {
     
     return parser
   } catch (error) {
-    throw createTreeSitterError(
-      error,
-      'initialization',
+    throw treeSitterError(
+      'error',
       `Failed to initialize parser for ${language}`,
-      language
+      language,
+      { error, phase: 'initialization' }
     )
   }
 }
@@ -384,11 +388,11 @@ export const withTreeSitterParser = <T>(
     Effect.flatMap(parser =>
       Effect.tryPromise({
         try: () => processor(parser),
-        catch: (error) => createTreeSitterError(
-          error,
-          'parsing',
+        catch: (error) => treeSitterError(
+          'error',
           `Parser operation failed for ${language}`,
-          language
+          language,
+          { error, phase: 'parsing' }
         )
       })
     )
@@ -461,11 +465,11 @@ export const discoverRelationships = (
 ): Effect.Effect<RelationshipData[], VibeError> => {
   return Effect.tryPromise({
     try: () => discoverRelationshipsSync(parseResult),
-    catch: (error) => createProcessingError(
-      error,
-      'analysis',
+    catch: (error) => processingError(
+      'error',
       'Failed to discover relationships',
-      parseResult.filePath
+      parseResult.filePath,
+      { error, phase: 'analysis' }
     )
   })
 }
@@ -478,11 +482,11 @@ export const analyzeDataFlow = (
 ): Effect.Effect<DataFlowRelationshipData[], VibeError> => {
   return Effect.tryPromise({
     try: () => analyzeDataFlowSync(parseResult),
-    catch: (error) => createProcessingError(
-      error,
-      'analysis',
+    catch: (error) => processingError(
+      'error',
       'Failed to analyze data flow',
-      parseResult.filePath
+      parseResult.filePath,
+      { error, phase: 'analysis' }
     )
   })
 }

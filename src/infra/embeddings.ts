@@ -9,7 +9,10 @@
 
 import { GoogleGenAI } from '@google/genai'
 import { Effect, pipe } from 'effect'
-import { createNetworkError, type VibeError } from './errors.ts'
+import { createError, type VibeError } from './errors.ts'
+
+// Create subsystem-specific error creator
+const networkError = createError('network')
 
 /**
  * Embedding result structure
@@ -111,7 +114,7 @@ export const generateSingleEmbedding = (
         tokenCount: estimateTokenCount(text)
       } satisfies EmbeddingResult
     },
-    catch: (error) => createNetworkError(error, 'Google AI API', 'Failed to generate embedding')
+    catch: (error) => networkError('error', 'Failed to generate embedding', 'Google AI API', { error })
   })
 }
 

@@ -6,10 +6,13 @@
 
 import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
-import { createConfigurationError, type VibeError } from '../index.ts'
+import { createError, type VibeError } from '../infra/errors.ts'
 import { runLLMFirstIndexing } from '../agent/indexing.ts'
 import { ensureWorkspaceReady } from '../workspace.ts'
 import { setLogLevel, LogLevel, logSystem } from '../infra/logger.ts'
+
+// Create subsystem-specific error creator
+const configError = createError('configuration')
 
 // Index command options schema with logging levels
 export const IndexOptionsSchema = z.object({
@@ -51,7 +54,7 @@ export const indexCommand = (
         },
         catch: (error) => {
           logSystem.error(`Failed to run LLM-first indexing: ${error instanceof Error ? error.message : String(error)}`)
-          return createConfigurationError(error, 'Failed to run LLM-first indexing')
+          return configError('error', 'Failed to run LLM-first indexing', undefined, { error })
         }
       })
     )

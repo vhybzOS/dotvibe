@@ -9,7 +9,10 @@
 
 import { z } from 'zod/v4'
 import { Effect, pipe } from 'effect'
-import { createConfigurationError, type VibeError } from '../index.ts'
+import { createError, type VibeError } from './errors.ts'
+
+// Create subsystem-specific error creator
+const configError = createError('configuration')
 
 /**
  * LLM Configuration Schema
@@ -200,9 +203,23 @@ export const WorkspaceConfigSchema = z.object({
 })
 
 /**
+ * Global CLI Configuration Schema
+ */
+export const CLIConfigSchema = z.object({
+  /** Enable verbose/debug output across all modules */
+  verbose: z.boolean().default(false),
+  
+  /** Enable debug-level logging */
+  debug: z.boolean().default(false)
+})
+
+/**
  * Main Configuration Schema
  */
 export const VibeConfigSchema = z.object({
+  /** CLI configuration */
+  cli: CLIConfigSchema.default({}),
+  
   /** LLM configuration */
   llm: LLMConfigSchema.default({}),
   
@@ -229,6 +246,7 @@ export const VibeConfigSchema = z.object({
  * Configuration type inference
  */
 export type VibeConfig = z.infer<typeof VibeConfigSchema>
+export type CLIConfig = z.infer<typeof CLIConfigSchema>
 export type LLMConfig = z.infer<typeof LLMConfigSchema>
 export type StorageConfig = z.infer<typeof StorageConfigSchema>
 export type TreeSitterConfig = z.infer<typeof TreeSitterConfigSchema>
@@ -236,6 +254,23 @@ export type ProcessingConfig = z.infer<typeof ProcessingConfigSchema>
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>
 export type LoggingConfig = z.infer<typeof LoggingConfigSchema>
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>
+
+/**
+ * Per-command verbose state - set once per CLI invocation
+ */
+let commandVerbose = false
+
+/**
+ * Set verbose mode for this command invocation
+ */
+export const setCommandVerbose = (verbose: boolean): void => {
+  commandVerbose = verbose
+}
+
+/**
+ * Get current command verbose setting
+ */
+export const getCommandVerbose = (): boolean => commandVerbose
 
 /**
  * Environment variable mappings
