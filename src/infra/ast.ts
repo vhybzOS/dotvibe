@@ -12,11 +12,14 @@ import { Effect, pipe } from 'effect'
 import { z } from 'zod/v4'
 import { Parser, Language, Query } from 'web-tree-sitter'
 import { createError, type VibeError } from './errors.ts'
-import { logSystem } from './logger.ts'
+import { getCommandVerbose } from './config.ts'
 
 // Create subsystem-specific error creators
 const treeSitterError = createError('treesitter')
 const processingError = createError('processing')
+
+// Get verbose setting for this command invocation
+const verbose = getCommandVerbose()
 
 /**
  * Symbol information extracted from AST
@@ -677,7 +680,7 @@ const extractElementFromNodeWithName = (
       return_type: returnType
     }
   } catch (error) {
-    logSystem.warn(`Failed to extract element from node with name: ${error}`)
+    verbose && console.warn(`Failed to extract element from node with name: ${error}`)
     return null
   }
 }
@@ -699,7 +702,7 @@ const extractElementFromNode = (
     // Use the helper function with extracted name
     return extractElementFromNodeWithName(node, lines, content, filePath, elementName)
   } catch (error) {
-    logSystem.warn(`Failed to extract element from node: ${error}`)
+    verbose && console.warn(`Failed to extract element from node: ${error}`)
     return null
   }
 }
@@ -831,7 +834,7 @@ const extractImportNames = (node: any): string[] => {
       }
     }
   } catch (error) {
-    logSystem.warn(`Failed to extract import names: ${error}`)
+    verbose && console.warn(`Failed to extract import names: ${error}`)
   }
   
   return names
@@ -1028,7 +1031,7 @@ const extractParameters = (node: any): string[] | undefined => {
       }
     }
   } catch (error) {
-    logSystem.warn(`Failed to extract parameters: ${error}`)
+    verbose && console.warn(`Failed to extract parameters: ${error}`)
   }
   
   return parameters.length > 0 ? parameters : undefined
@@ -1048,7 +1051,7 @@ const extractReturnType = (node: any): string | undefined => {
       return typeNode.text.replace(/^:\s*/, '')
     }
   } catch (error) {
-    logSystem.warn(`Failed to extract return type: ${error}`)
+    verbose && console.warn(`Failed to extract return type: ${error}`)
   }
   
   return undefined
@@ -1202,7 +1205,7 @@ const trackImportedNames = (importNode: any, importMap: Map<string, string>, cur
       }
     }
   } catch (error) {
-    logSystem.warn(`Failed to track imported names: ${error}`)
+    verbose && console.warn(`Failed to track imported names: ${error}`)
   }
 }
 
@@ -1329,7 +1332,7 @@ const extractExternalUsageRelationship = (
       complexity_score: 0.3
     }
   } catch (error) {
-    logSystem.warn(`Failed to extract external usage relationship: ${error}`)
+    verbose && console.warn(`Failed to extract external usage relationship: ${error}`)
     return null
   }
 }
@@ -1408,7 +1411,7 @@ const extractTypeRelationship = (
       complexity_score: 0.2
     }
   } catch (error) {
-    logSystem.warn(`Failed to extract type relationship: ${error}`)
+    verbose && console.warn(`Failed to extract type relationship: ${error}`)
     return null
   }
 }
@@ -1543,7 +1546,7 @@ const extractImportRelationship = (node: any, parseResult: ParseResult): Relatio
       complexity_score: 0.3
     }
   } catch (error) {
-    logSystem.warn(`Failed to extract import relationship: ${error}`)
+    verbose && console.warn(`Failed to extract import relationship: ${error}`)
     return null
   }
 }
@@ -1598,7 +1601,7 @@ const extractInheritanceRelationships = (node: any, parseResult: ParseResult): R
       }
     }
   } catch (error) {
-    logSystem.warn(`Failed to extract inheritance relationships: ${error}`)
+    verbose && console.warn(`Failed to extract inheritance relationships: ${error}`)
   }
   
   return relationships
@@ -1646,7 +1649,7 @@ const analyzeDataFlowSync = async (parseResult: ParseResult): Promise<DataFlowRe
     }
   } catch (error) {
     console.log('DEBUG: Query error:', error)
-    logSystem.warn(`Failed to analyze data flow with tree-sitter queries: ${error}`)
+    verbose && console.warn(`Failed to analyze data flow with tree-sitter queries: ${error}`)
     // Fallback to empty array - better than crashing
   }
   
@@ -1766,7 +1769,7 @@ const extractDataFlowFromMatch = (match: any, parseResult: ParseResult): DataFlo
     
     return null
   } catch (error) {
-    logSystem.warn(`Failed to extract data flow from match: ${error}`)
+    verbose && console.warn(`Failed to extract data flow from match: ${error}`)
     return null
   }
 }

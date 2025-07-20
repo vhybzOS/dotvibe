@@ -279,6 +279,15 @@ const resolveProjectPath = (filePath: string, projectPath: string): string => {
 }
 
 /**
+ * Extract file path from element path for proper file attribution
+ * Handles both internal (file:element) and external (module:element) paths
+ */
+const extractFilePathFromElementPath = (elementPath: string): string => {
+  const colonIndex = elementPath.lastIndexOf(':')
+  return colonIndex === -1 ? elementPath : elementPath.substring(0, colonIndex)
+}
+
+/**
  * Create current timestamp for SurrealDB
  */
 const now = (): Date => new Date()
@@ -771,9 +780,15 @@ export const indexFile = (
                 // UPDATE existing placeholder to preserve ID and relationships
                 console.log(`DEBUG: Updating placeholder to real element: ${element.element_name}`)
                 
+                // Determine correct file path: use resolved path for imports, current file for locals
+                const correctFilePath = element.element_type === 'import' 
+                  ? extractFilePathFromElementPath(elementPath)
+                  : absolutePath
+
                 await db.query(`
                   UPDATE code_elements SET
                     element_type = $element_type,
+                    file_path = $file_path,
                     start_line = $start_line,
                     end_line = $end_line,
                     content = $content,
@@ -782,6 +797,7 @@ export const indexFile = (
                 `, {
                   elementId: existingElement.id,
                   element_type: element.element_type,
+                  file_path: correctFilePath,
                   start_line: element.start_line,
                   end_line: element.end_line,
                   content: element.content
@@ -793,9 +809,15 @@ export const indexFile = (
                 // UPDATE existing real element with new content (idempotent)
                 console.log(`DEBUG: Updating existing element: ${element.element_name}`)
                 
+                // Determine correct file path: use resolved path for imports, current file for locals
+                const correctFilePath = element.element_type === 'import' 
+                  ? extractFilePathFromElementPath(elementPath)
+                  : absolutePath
+                
                 await db.query(`
                   UPDATE code_elements SET
                     element_type = $element_type,
+                    file_path = $file_path,
                     start_line = $start_line,
                     end_line = $end_line,
                     content = $content
@@ -803,6 +825,7 @@ export const indexFile = (
                 `, {
                   elementPath,
                   element_type: element.element_type,
+                  file_path: correctFilePath,
                   start_line: element.start_line,
                   end_line: element.end_line,
                   content: element.content
@@ -814,6 +837,11 @@ export const indexFile = (
             } else {
               // CREATE new element using UPSERT with element_path as key
               console.log(`DEBUG: Creating new element: ${element.element_name}`)
+              
+              // Determine correct file path: use resolved path for imports, current file for locals
+              const correctFilePath = element.element_type === 'import' 
+                ? extractFilePathFromElementPath(elementPath)
+                : absolutePath
               
               await db.query(`
                 UPSERT code_elements CONTENT {
@@ -828,7 +856,7 @@ export const indexFile = (
                 }
               `, {
                 elementPath,
-                file_path: absolutePath,
+                file_path: correctFilePath,
                 element_name: element.element_name,
                 element_type: element.element_type,
                 start_line: element.start_line,
