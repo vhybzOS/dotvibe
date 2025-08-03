@@ -442,3 +442,86 @@ func addToShellProfile(profilePath, pathLine, comment string) error {
 	
 	return nil
 }
+
+// cleanupPATH removes dotvibe PATH entries from shell profiles during uninstall
+func cleanupPATH(installType InstallationType) error {
+	// Only clean up PATH for user installations
+	if installType == SystemInstall {
+		return nil // System installs don't modify PATH
+	}
+
+	// Get user's home directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get user home directory: %w", err)
+	}
+
+	// Shell profile files to clean up
+	profiles := []string{
+		filepath.Join(homeDir, ".bashrc"),
+		filepath.Join(homeDir, ".zshrc"),
+		filepath.Join(homeDir, ".profile"),
+	}
+
+	pathPattern := "/.local/bin" // Pattern to match in PATH exports
+	dotvibeComment := "# Added by dotvibe installer"
+
+	for _, profile := range profiles {
+		if err := removeFromShellProfile(profile, pathPattern, dotvibeComment); err != nil {
+			fmt.Printf("⚠️  Failed to clean up %s: %v\n", filepath.Base(profile), err)
+			continue
+		}
+		fmt.Printf("🧹 Cleaned up %s\n", filepath.Base(profile))
+	}
+
+	fmt.Printf("📝 Removed dotvibe PATH entries from shell profiles\n")
+	return nil
+}
+
+// removeFromShellProfile removes dotvibe-related PATH entries from a shell profile
+func removeFromShellProfile(profilePath, pathPattern, comment string) error {
+	// Check if profile exists
+	if _, err := os.Stat(profilePath); os.IsNotExist(err) {
+		return nil // File doesn't exist, nothing to clean up
+	}
+
+	// Read the entire file
+	content, err := os.ReadFile(profilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read profile: %w", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var cleanedLines []string
+	var skipNext bool
+
+	for _, line := range lines {
+		// Skip lines that are dotvibe comments
+		if strings.Contains(line, comment) {
+			skipNext = true // Skip the next line too (the export statement)
+			continue
+		}
+
+		// Skip export lines that contain our path pattern and follow a dotvibe comment
+		if skipNext && strings.Contains(line, "export PATH=") && strings.Contains(line, pathPattern) {
+			skipNext = false
+			continue
+		}
+
+		// Reset skip flag if we encounter a non-export line
+		if skipNext && !strings.HasPrefix(strings.TrimSpace(line), "export PATH=") {
+			skipNext = false
+		}
+
+		cleanedLines = append(cleanedLines, line)
+	}
+
+	// Write the cleaned content back to the file
+	cleanedContent := strings.Join(cleanedLines, "\n")
+	err = os.WriteFile(profilePath, []byte(cleanedContent), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write cleaned profile: %w", err)
+	}
+
+	return nil
+}

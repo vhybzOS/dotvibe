@@ -484,13 +484,161 @@ func getBinaryVersions() (vibeVersion, surrealVersion, code2promptVersion string
 	return vibeVersion, surrealVersion, code2promptVersion, nil
 }
 
+// handleUninstall handles the uninstallation process
+func handleUninstall(globalFlag, userFlag bool) error {
+	fmt.Printf("🗑️  Uninstalling dotvibe...\n")
+
+	// Determine installation type
+	installType, err := getInstallationTypeFromFlags(globalFlag, userFlag)
+	if err != nil {
+		return fmt.Errorf("failed to determine installation type: %w", err)
+	}
+
+	// If no flags specified, try to detect existing installations
+	if !globalFlag && !userFlag {
+		return handleAutoDetectUninstall()
+	}
+
+	// Show installation type
+	showInstallationType(installType)
+
+	// Handle elevation if needed for system uninstall
+	if installType == SystemInstall {
+		fmt.Printf("⚠️  System uninstall requires administrator privileges\n")
+		autoConfirm := globalFlag // Auto-confirm if explicit --global flag was used
+		err = handleElevationWorkflow(installType, autoConfirm)
+		if err != nil {
+			return fmt.Errorf("elevation failed: %w", err)
+		}
+	}
+
+	// Get all installed versions for this installation type
+	versions, err := GetAllVersions(installType)
+	if err != nil {
+		return fmt.Errorf("failed to get installed versions: %w", err)
+	}
+
+	if len(versions) == 0 {
+		fmt.Printf("ℹ️  No %s installations found\n", installType)
+		return nil
+	}
+
+	fmt.Printf("📦 Found %d version(s): %v\n", len(versions), versions)
+
+	// Uninstall all versions
+	for _, version := range versions {
+		err := uninstallVersion(installType, version)
+		if err != nil {
+			fmt.Printf("⚠️  Failed to uninstall version %s: %v\n", version, err)
+			continue
+		}
+		fmt.Printf("✅ Uninstalled version %s\n", version)
+	}
+
+	// Clean up PATH entries
+	err = cleanupPATH(installType)
+	if err != nil {
+		fmt.Printf("⚠️  Failed to clean up PATH: %v\n", err)
+		// Don't fail uninstall for PATH cleanup issues
+	}
+
+	fmt.Printf("\n✅ Uninstall complete!\n")
+	return nil
+}
+
+// handleAutoDetectUninstall tries to detect and uninstall both user and system installations
+func handleAutoDetectUninstall() error {
+	fmt.Printf("🔍 Auto-detecting installations...\n")
+
+	var foundAny bool
+
+	// Check user installations
+	userVersions, err := GetAllVersions(UserInstall)
+	if err == nil && len(userVersions) > 0 {
+		foundAny = true
+		fmt.Printf("👤 Found user installation(s): %v\n", userVersions)
+		for _, version := range userVersions {
+			err := uninstallVersion(UserInstall, version)
+			if err != nil {
+				fmt.Printf("⚠️  Failed to uninstall user version %s: %v\n", version, err)
+				continue
+			}
+			fmt.Printf("✅ Uninstalled user version %s\n", version)
+		}
+		// Clean up user PATH
+		cleanupPATH(UserInstall)
+	}
+
+	// Check system installations (may require privileges)
+	systemVersions, err := GetAllVersions(SystemInstall)
+	if err == nil && len(systemVersions) > 0 {
+		foundAny = true
+		fmt.Printf("🖥️  Found system installation(s): %v\n", systemVersions)
+		fmt.Printf("⚠️  System uninstall requires administrator privileges\n")
+		
+		// Handle elevation for system uninstall
+		err = handleElevationWorkflow(SystemInstall, false)
+		if err != nil {
+			fmt.Printf("⚠️  Failed to get administrator privileges for system uninstall: %v\n", err)
+		} else {
+			for _, version := range systemVersions {
+				err := uninstallVersion(SystemInstall, version)
+				if err != nil {
+					fmt.Printf("⚠️  Failed to uninstall system version %s: %v\n", version, err)
+					continue
+				}
+				fmt.Printf("✅ Uninstalled system version %s\n", version)
+			}
+		}
+	}
+
+	if !foundAny {
+		fmt.Printf("ℹ️  No dotvibe installations found\n")
+		return nil
+	}
+
+	fmt.Printf("\n✅ Auto-uninstall complete!\n")
+	return nil
+}
+
+// uninstallVersion removes a specific version installation
+func uninstallVersion(installType InstallationType, version string) error {
+	config, err := NewPathConfig(installType, version)
+	if err != nil {
+		return fmt.Errorf("failed to create path config: %w", err)
+	}
+
+	// Remove symlink first
+	symlinkPath := config.GetSymlinkPath()
+	if symlinkPath != "" {
+		if _, err := os.Lstat(symlinkPath); err == nil {
+			if err := os.Remove(symlinkPath); err != nil {
+				fmt.Printf("⚠️  Failed to remove symlink %s: %v\n", symlinkPath, err)
+			} else {
+				fmt.Printf("🔗 Removed symlink: %s\n", symlinkPath)
+			}
+		}
+	}
+
+	// Remove the version directory
+	if _, err := os.Stat(config.BaseDir); err == nil {
+		if err := os.RemoveAll(config.BaseDir); err != nil {
+			return fmt.Errorf("failed to remove installation directory %s: %w", config.BaseDir, err)
+		}
+		fmt.Printf("📁 Removed: %s\n", config.BaseDir)
+	}
+
+	return nil
+}
+
 func main() {
 	// Parse command line flags
 	var (
-		globalFlag = flag.Bool("global", false, "Install system-wide (requires admin/sudo privileges)")
-		userFlag   = flag.Bool("user", false, "Install for current user only")
-		helpFlag   = flag.Bool("help", false, "Show usage information")
-		versionFlag = flag.Bool("version", false, "Show installer version")
+		globalFlag    = flag.Bool("global", false, "Install system-wide (requires admin/sudo privileges)")
+		userFlag      = flag.Bool("user", false, "Install for current user only")
+		uninstallFlag = flag.Bool("uninstall", false, "Uninstall dotvibe")
+		helpFlag      = flag.Bool("help", false, "Show usage information")
+		versionFlag   = flag.Bool("version", false, "Show installer version")
 	)
 	flag.Parse()
 
@@ -503,6 +651,16 @@ func main() {
 	// Handle help flag
 	if *helpFlag {
 		showUsage()
+		os.Exit(0)
+	}
+
+	// Handle uninstall flag
+	if *uninstallFlag {
+		err := handleUninstall(*globalFlag, *userFlag)
+		if err != nil {
+			fmt.Printf("❌ Uninstall failed: %v\n", err)
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -695,19 +853,25 @@ USAGE:
     ./install-dotvibe [FLAGS]
 
 FLAGS:
-    --global    Install system-wide (requires admin/sudo privileges)
-                Location: /usr/local/dotvibe/{version}/ (Unix) or C:\\Program Files\\dotvibe\\{version}\\ (Windows)
-                
-    --user      Install for current user only (default)
-                Location: ~/.local/dotvibe/{version}/ (Unix) or %%USERPROFILE%%\\.local\\dotvibe\\{version}\\ (Windows)
-                
-    --version   Show installer version
-    --help      Show this help message
+    --global      Install system-wide (requires admin/sudo privileges)
+                  Location: /usr/local/dotvibe/{version}/ (Unix) or C:\\Program Files\\dotvibe\\{version}\\ (Windows)
+                  
+    --user        Install for current user only (default)
+                  Location: ~/.local/dotvibe/{version}/ (Unix) or %%USERPROFILE%%\\.local\\dotvibe\\{version}\\ (Windows)
+                  
+    --uninstall   Uninstall dotvibe (can be combined with --global or --user)
+                  Auto-detects installations if no type specified
+                  
+    --version     Show installer version
+    --help        Show this help message
 
 EXAMPLES:
     ./install-dotvibe              # Install for current user (default)
     ./install-dotvibe --user       # Install for current user (explicit)
     ./install-dotvibe --global     # Install system-wide (requires elevation)
+    ./install-dotvibe --uninstall  # Auto-detect and uninstall all installations
+    ./install-dotvibe --uninstall --user    # Uninstall user installation only
+    ./install-dotvibe --uninstall --global  # Uninstall system installation only
     
 NOTE:
     System-wide installation (--global) requires administrator privileges:
