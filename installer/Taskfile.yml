@@ -28,7 +28,9 @@ tasks:
     desc: Cross-compile for all platforms
     cmds:
       - GOOS=linux GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}-linux-amd64 .
+      - GOOS=linux GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}-linux-arm64 .
       - GOOS=darwin GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}-darwin-amd64 .
+      - GOOS=darwin GOARCH=arm64 go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}-darwin-arm64 .
       - GOOS=windows GOARCH=amd64 go build -ldflags "{{.LDFLAGS}}" -o {{.APP_NAME}}-windows-amd64.exe .
 
   test:
@@ -59,3 +61,28 @@ tasks:
     deps: [build]
     cmds:
       - ./{{.APP_NAME}}{{exeExt}}
+
+  run:user:
+    desc: Build and run installer with user installation (explicit)
+    deps: [build]
+    cmds:
+      - ./{{.APP_NAME}}{{exeExt}} --user
+
+  run:global:
+    desc: Build and run installer with system-wide installation (requires elevation)
+    deps: [build]
+    cmds:
+      - ./{{.APP_NAME}}{{exeExt}} --global
+
+  validate:
+    desc: Validate installer code quality
+    deps: [lint, test]
+    cmds:
+      - echo "✅ All validations passed"
+
+  release:
+    desc: Build release binaries for all platforms
+    deps: [validate, build:all]
+    cmds:
+      - echo "✅ Release binaries built for all platforms"
+      - ls -la {{.APP_NAME}}-*
