@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (test without creating release)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  detect-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from deno.json
+        id: version
+        run: |
+          VERSION=$(jq -r '.version' deno.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "🔍 Detected version: $VERSION"
+
+      - name: Check if release exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "🧪 Dry run mode - skipping release check"
+          elif gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "⚠️  Release v$VERSION already exists, skipping"
+          else
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "✅ Release v$VERSION does not exist, proceeding"
+          fi
+
+  test-build:
+    runs-on: ubuntu-latest
+    needs: detect-version
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.1.4
+
+      - name: Test single platform build
+        run: |
+          VERSION=${{ needs.detect-version.outputs.version }}
+          echo "🧪 Testing build for version $VERSION"
+          deno compile --allow-all --include data/ --output "test-vibe-v$VERSION" src/cli.ts
+          ls -la test-vibe-v$VERSION
+          echo "✅ Build test successful"
+
+  placeholder-release:
+    runs-on: ubuntu-latest
+    needs: [detect-version, test-build]
+    if: needs.detect-version.outputs.should_release == 'true'
+    steps:
+      - name: Release placeholder
+        run: |
+          echo "🚀 Would create release v${{ needs.detect-version.outputs.version }}"
+          echo "This is a minimal workflow for testing - full workflow on feature branch"
