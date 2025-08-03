@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -32,7 +34,7 @@ func detectPlatform() (goos, goarch string) {
 
 // buildVibeDownloadURL constructs the GitHub releases download URL for vibe binary
 func buildVibeDownloadURL(goos, goarch, version string) string {
-	baseURL := "https://github.com/vhybzOS/.vibe/releases/download"
+	baseURL := "https://github.com/vhybzOS/dotvibe/releases/download"
 
 	// Map Go arch names to release asset names
 	var archName string
@@ -49,7 +51,7 @@ func buildVibeDownloadURL(goos, goarch, version string) string {
 	var osName string
 	switch goos {
 	case "darwin":
-		osName = "macos"
+		osName = "darwin"
 	default:
 		osName = goos
 	}
@@ -72,24 +74,24 @@ func buildSurrealDBDownloadURL(goos, goarch, version string) string {
 	var archName string
 	switch goarch {
 	case "amd64":
-		archName = "x86_64"
+		archName = "amd64"
 	case "arm64":
-		archName = "aarch64"
+		archName = "arm64"
 	default:
 		archName = goarch
 	}
 
-	// Map OS names and build filename
+	// Map OS names and build filename (SurrealDB releases are in .tgz format)
 	var filename string
 	switch goos {
 	case "windows":
-		filename = fmt.Sprintf("surreal-%s-windows-%s.exe", version, archName)
+		filename = fmt.Sprintf("surreal-%s.windows-%s.tgz", version, archName)
 	case "darwin":
-		filename = fmt.Sprintf("surreal-%s-darwin-%s", version, archName)
+		filename = fmt.Sprintf("surreal-%s.darwin-%s.tgz", version, archName)
 	case "linux":
-		filename = fmt.Sprintf("surreal-%s-linux-%s", version, archName)
+		filename = fmt.Sprintf("surreal-%s.linux-%s.tgz", version, archName)
 	default:
-		filename = fmt.Sprintf("surreal-%s-%s-%s", version, goos, archName)
+		filename = fmt.Sprintf("surreal-%s.%s-%s.tgz", version, goos, archName)
 	}
 
 	return fmt.Sprintf("%s/%s/%s", baseURL, version, filename)
@@ -170,28 +172,28 @@ type GitHubRelease struct {
 
 // getLatestVersion gets the latest release version from GitHub API
 func getLatestVersion() (string, error) {
-	url := "https://api.github.com/repos/vhybzOS/.vibe/releases/latest"
+	url := "https://api.github.com/repos/vhybzOS/dotvibe/releases/latest"
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		// Fallback to hardcoded version if API fails  
 		fmt.Printf("⚠️  GitHub API unavailable, using fallback version\n")
-		return "v0.7.27", nil
+		return "v0.4.0", nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		// Fallback to hardcoded version if API returns error
 		fmt.Printf("⚠️  GitHub API error (%d), using fallback version\n", resp.StatusCode)
-		return "v0.7.27", nil
+		return "v0.4.0", nil
 	}
 
 	var release GitHubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		// Fallback to hardcoded version if JSON decode fails
 		fmt.Printf("⚠️  Failed to parse GitHub API response, using fallback version\n")
-		return "v0.7.27", nil
+		return "v0.4.0", nil
 	}
 
 	return release.TagName, nil
@@ -267,8 +269,17 @@ func downloadBinary(url, destPath string) error {
 func installBinary(binary BinaryInfo) error {
 	fmt.Printf("📦 Installing %s %s...\n", binary.Name, binary.Version)
 
+	// Determine if this is a .tgz file (SurrealDB case)
+	isTgz := filepath.Ext(binary.URL) == ".tgz"
+	
 	// Download to temporary file
-	tempPath := filepath.Join(os.TempDir(), filepath.Base(binary.Path))
+	var tempPath string
+	if isTgz {
+		tempPath = filepath.Join(os.TempDir(), fmt.Sprintf("%s.tgz", binary.Name))
+	} else {
+		tempPath = filepath.Join(os.TempDir(), filepath.Base(binary.Path))
+	}
+	
 	err := downloadBinary(binary.URL, tempPath)
 	if err != nil {
 		return fmt.Errorf("failed to download %s: %w", binary.Name, err)
@@ -287,14 +298,24 @@ func installBinary(binary BinaryInfo) error {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
-	// Move to final location
-	if err := os.Rename(tempPath, binary.Path); err != nil {
-		// If rename fails, try copy and delete
-		if copyErr := copyFile(tempPath, binary.Path); copyErr != nil {
-			os.Remove(tempPath)
-			return fmt.Errorf("failed to install binary: %w", copyErr)
+	// Handle .tgz extraction or regular binary installation
+	if isTgz {
+		// Extract .tgz file and get the binary
+		err = extractTgzBinary(tempPath, binary.Path, binary.Name)
+		os.Remove(tempPath) // Clean up downloaded .tgz
+		if err != nil {
+			return fmt.Errorf("failed to extract %s from tgz: %w", binary.Name, err)
 		}
-		os.Remove(tempPath)
+	} else {
+		// Regular binary installation
+		if err := os.Rename(tempPath, binary.Path); err != nil {
+			// If rename fails, try copy and delete
+			if copyErr := copyFile(tempPath, binary.Path); copyErr != nil {
+				os.Remove(tempPath)
+				return fmt.Errorf("failed to install binary: %w", copyErr)
+			}
+			os.Remove(tempPath)
+		}
 	}
 
 	// Make executable (Unix only)
@@ -333,6 +354,56 @@ func copyFile(src, dst string) error {
 	}
 
 	return os.Chmod(dst, sourceInfo.Mode())
+}
+
+// extractTgzBinary extracts a binary from a .tgz file
+func extractTgzBinary(tgzPath, destPath, binaryName string) error {
+	// Open the .tgz file
+	file, err := os.Open(tgzPath)
+	if err != nil {
+		return fmt.Errorf("failed to open tgz file: %w", err)
+	}
+	defer file.Close()
+
+	// Create gzip reader
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzipReader.Close()
+
+	// Create tar reader
+	tarReader := tar.NewReader(gzipReader)
+
+	// Look for the binary file in the tar archive
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break // End of archive
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar header: %w", err)
+		}
+
+		// Check if this is the binary we're looking for
+		if header.Typeflag == tar.TypeReg && filepath.Base(header.Name) == binaryName {
+			// Create the destination file
+			destFile, err := os.Create(destPath)
+			if err != nil {
+				return fmt.Errorf("failed to create destination file: %w", err)
+			}
+			defer destFile.Close()
+
+			// Copy the binary from tar to destination
+			if _, err := io.Copy(destFile, tarReader); err != nil {
+				return fmt.Errorf("failed to extract binary: %w", err)
+			}
+
+			return nil // Success
+		}
+	}
+
+	return fmt.Errorf("binary '%s' not found in tgz archive", binaryName)
 }
 
 // verifyInstallation checks that all binaries are installed correctly
