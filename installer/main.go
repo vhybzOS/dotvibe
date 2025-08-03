@@ -620,7 +620,14 @@ func main() {
 		// Don't exit - symlink is optional
 	}
 
-	// 13. Display success message
+	// 13. Update PATH for user installations
+	err = pathConfig.UpdatePATH()
+	if err != nil {
+		fmt.Printf("⚠️  Failed to update PATH: %v\n", err)
+		// Don't exit - PATH update is optional
+	}
+
+	// 14. Display success message
 	fmt.Printf("\n✅ Installation complete!\n")
 	fmt.Printf("🎉 Try: vibe --version\n")
 	fmt.Printf("\n📦 Installed components:\n")
@@ -636,7 +643,9 @@ func main() {
 		fmt.Printf("\n📝 Note: System-wide installation completed. All users can now use 'vibe'.\n")
 	} else {
 		fmt.Printf("\n📝 Note: User installation completed. Only current user can use 'vibe'.\n")
-		fmt.Printf("💡 Tip: Use --global flag for system-wide installation next time.\n")
+		fmt.Printf("🔄 Shell profiles updated to include vibe in PATH.\n")
+		fmt.Printf("💡 Restart your terminal or run: source ~/.bashrc (or ~/.zshrc)\n")
+		fmt.Printf("🔧 Alternative: Use --global flag for system-wide installation next time.\n")
 	}
 
 }

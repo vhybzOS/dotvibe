@@ -360,3 +360,85 @@ func copyFileForSymlink(src, dst string) error {
 	
 	return os.Chmod(dst, sourceInfo.Mode())
 }
+
+// UpdatePATH adds the symlink directory to the user's PATH in shell profiles
+func (pc *PathConfig) UpdatePATH() error {
+	// Only update PATH for user installations, system installations use /usr/local/bin (already in PATH)
+	if pc.Type == SystemInstall {
+		return nil // System installs don't need PATH updates
+	}
+	
+	symlinkDir := filepath.Dir(pc.GetSymlinkPath())
+	
+	// Get user's home directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get user home directory: %w", err)
+	}
+	
+	// Shell profile files to update
+	profiles := []string{
+		filepath.Join(homeDir, ".bashrc"),
+		filepath.Join(homeDir, ".zshrc"),
+		filepath.Join(homeDir, ".profile"),
+	}
+	
+	// PATH export line to add
+	pathLine := fmt.Sprintf("export PATH=\"%s:$PATH\"", symlinkDir)
+	pathComment := "# Added by dotvibe installer"
+	
+	for _, profile := range profiles {
+		if err := addToShellProfile(profile, pathLine, pathComment); err != nil {
+			// Don't fail installation if we can't update a profile
+			fmt.Printf("⚠️  Failed to update %s: %v\n", filepath.Base(profile), err)
+			continue
+		}
+		fmt.Printf("✅ Updated %s\n", filepath.Base(profile))
+	}
+	
+	fmt.Printf("📝 Added %s to PATH in shell profiles\n", symlinkDir)
+	fmt.Printf("💡 Restart your shell or run: source ~/.bashrc (or ~/.zshrc)\n")
+	
+	return nil
+}
+
+// addToShellProfile adds a PATH export line to a shell profile if it doesn't already exist
+func addToShellProfile(profilePath, pathLine, comment string) error {
+	// Check if profile exists
+	var existingContent []byte
+	var err error
+	
+	if _, err := os.Stat(profilePath); err == nil {
+		existingContent, err = os.ReadFile(profilePath)
+		if err != nil {
+			return fmt.Errorf("failed to read profile: %w", err)
+		}
+		
+		// Check if PATH line already exists
+		if strings.Contains(string(existingContent), pathLine) {
+			return nil // Already exists, nothing to do
+		}
+	}
+	
+	// Open file for appending (create if it doesn't exist)
+	file, err := os.OpenFile(profilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open profile for writing: %w", err)
+	}
+	defer file.Close()
+	
+	// Add newline if file exists and doesn't end with newline
+	if len(existingContent) > 0 && !strings.HasSuffix(string(existingContent), "\n") {
+		if _, err := file.WriteString("\n"); err != nil {
+			return fmt.Errorf("failed to write newline: %w", err)
+		}
+	}
+	
+	// Write the PATH update
+	pathUpdate := fmt.Sprintf("\n%s\n%s\n", comment, pathLine)
+	if _, err := file.WriteString(pathUpdate); err != nil {
+		return fmt.Errorf("failed to write PATH update: %w", err)
+	}
+	
+	return nil
+}
