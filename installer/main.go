@@ -451,7 +451,7 @@ func downloadTreeSitterWASM(dataDir string) error {
 		},
 		{
 			name: "tree-sitter-typescript.wasm",
-			url:  "https://github.com/tree-sitter/tree-sitter-typescript/releases/download/v0.20.3/tree-sitter-typescript.wasm",
+			url:  "https://github.com/tree-sitter/tree-sitter-typescript/releases/download/v0.23.2/tree-sitter-typescript.wasm",
 		},
 	}
 
