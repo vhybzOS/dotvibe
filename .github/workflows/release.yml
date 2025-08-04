@@ -29,10 +29,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract version from deno.json
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.4.3
+
+      - name: Generate and extract version
         id: version
         run: |
-          VERSION=$(jq -r '.version' deno.json)
+          # Generate version.ts first
+          deno run --allow-read --allow-write scripts/generate-version.ts
+          # Read version from generated version.ts (single source of truth)
+          VERSION=$(deno eval "import { VERSION } from './src/version.ts'; console.log(VERSION)")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "🔍 Detected version: $VERSION"
 

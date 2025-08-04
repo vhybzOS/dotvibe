@@ -10,8 +10,8 @@ echo "🚀 Building dotvibe for all platforms..."
 echo "🔧 Generating version.ts..."
 deno run --allow-read --allow-write scripts/generate-version.ts
 
-# Get version from deno.json
-VERSION=$(cat deno.json | jq -r '.version')
+# Get version from generated version.ts (single source of truth)
+VERSION=$(deno eval "import { VERSION } from './src/version.ts'; console.log(VERSION)")
 echo "📦 Version: v${VERSION}"
 
 # Create build directory
