@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    branches: [main]
+    paths: ['deno.json']
   workflow_dispatch:
     inputs:
       dry_run:
@@ -11,6 +14,10 @@ on:
         options:
           - 'true'
           - 'false'
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   detect-version:
@@ -46,9 +53,25 @@ jobs:
             echo "✅ Release v$VERSION does not exist, proceeding"
           fi
 
-  test-build:
+  build-binaries:
     runs-on: ubuntu-latest
     needs: detect-version
+    if: needs.detect-version.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        target:
+          - platform: linux
+            arch: x86_64
+            deno_target: x86_64-unknown-linux-gnu
+          - platform: darwin
+            arch: x86_64
+            deno_target: x86_64-apple-darwin
+          - platform: darwin
+            arch: arm64
+            deno_target: aarch64-apple-darwin
+          - platform: windows
+            arch: x86_64
+            deno_target: x86_64-pc-windows-msvc
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -56,22 +79,128 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.1.4
+          deno-version: v2.4.3
 
-      - name: Test single platform build
+      - name: Build binary
         run: |
           VERSION=${{ needs.detect-version.outputs.version }}
-          echo "🧪 Testing build for version $VERSION"
-          deno compile --allow-all --include data/ --output "test-vibe-v$VERSION" src/cli.ts
-          ls -la test-vibe-v$VERSION
-          echo "✅ Build test successful"
+          FILENAME="vibe-v$VERSION-${{ matrix.target.platform }}-${{ matrix.target.arch }}"
+          if [ "${{ matrix.target.platform }}" = "windows" ]; then
+            FILENAME="$FILENAME.exe"
+          fi
+          
+          echo "🚀 Building $FILENAME for ${{ matrix.target.deno_target }}"
+          deno compile --allow-all --include data/ --no-check --target ${{ matrix.target.deno_target }} --output "$FILENAME" src/cli.ts
+          
+          # Verify binary was created
+          ls -la "$FILENAME"
 
-  placeholder-release:
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target.platform }}-${{ matrix.target.arch }}
+          path: vibe-v${{ needs.detect-version.outputs.version }}-${{ matrix.target.platform }}-${{ matrix.target.arch }}*
+          retention-days: 1
+
+  build-installers:
     runs-on: ubuntu-latest
-    needs: [detect-version, test-build]
+    needs: [detect-version, build-binaries]
     if: needs.detect-version.outputs.should_release == 'true'
+    permissions:
+      contents: write
+      packages: write
     steps:
-      - name: Release placeholder
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install Task
         run: |
-          echo "🚀 Would create release v${{ needs.detect-version.outputs.version }}"
-          echo "This is a minimal workflow for testing - full workflow on feature branch"
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/.local/bin
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: installer/binaries
+          merge-multiple: true
+
+      - name: List downloaded binaries
+        run: |
+          echo "📦 Downloaded binaries:"
+          ls -la installer/binaries/
+
+      - name: Build installers for all platforms
+        working-directory: installer
+        run: |
+          echo "🏗️  Building Go installers for all platforms"
+          ~/.local/bin/task build:all
+
+      - name: List built installers
+        run: |
+          echo "🎁 Built installers:"
+          ls -la installer/install-dotvibe-*
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers
+          path: installer/install-dotvibe-*
+          retention-days: 1
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [detect-version, build-binaries, build-installers]
+    if: needs.detect-version.outputs.should_release == 'true'
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: installers
+          path: release-assets
+
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          echo "🔐 Generating checksums for all assets"
+          sha256sum * > checksums.txt
+          echo "📋 Checksums:"
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ needs.detect-version.outputs.version }}
+          TAG="v$VERSION"
+          
+          echo "🚀 Creating release $TAG"
+          
+          # Create release with auto-generated notes
+          gh release create "$TAG" \
+            --title "dotvibe $TAG" \
+            --generate-notes \
+            --latest
+          
+          # Upload all assets
+          echo "📦 Uploading release assets"
+          gh release upload "$TAG" release-assets/*
+          
+          echo "✅ Release $TAG created successfully!"

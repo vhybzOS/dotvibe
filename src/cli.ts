@@ -288,6 +288,36 @@ const formatError = (error: VibeError): string => {
 }
 
 /**
+ * Get version from deno.json
+ */
+const getVersion = (): string => {
+  try {
+    // Try multiple paths to find deno.json
+    const possiblePaths = [
+      new URL('../deno.json', import.meta.url).pathname,
+      './deno.json',
+      '../deno.json',
+      '../../deno.json'
+    ]
+    
+    for (const path of possiblePaths) {
+      try {
+        const denoConfig = JSON.parse(Deno.readTextFileSync(path))
+        return denoConfig.version || '1.0.0'
+      } catch {
+        continue
+      }
+    }
+    
+    // If no deno.json found, return fallback
+    return '1.0.0'
+  } catch {
+    // Fallback version if deno.json can't be read
+    return '1.0.0'
+  }
+}
+
+/**
  * Setup CLI commands and options
  */
 const setupCLI = () => {
@@ -296,7 +326,7 @@ const setupCLI = () => {
   program
     .name('vibe')
     .description('dotvibe - Intelligent Code Indexing and Search')
-    .version('1.0.0')
+    .version(getVersion())
   
   // Init command
   program
