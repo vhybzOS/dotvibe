@@ -288,33 +288,13 @@ const formatError = (error: VibeError): string => {
 }
 
 /**
- * Get version from deno.json
+ * Get version from generated version file
+ * This ensures compiled binaries have the correct version embedded
  */
+import { VERSION } from './version.ts'
+
 const getVersion = (): string => {
-  try {
-    // Try multiple paths to find deno.json
-    const possiblePaths = [
-      new URL('../deno.json', import.meta.url).pathname,
-      './deno.json',
-      '../deno.json',
-      '../../deno.json'
-    ]
-    
-    for (const path of possiblePaths) {
-      try {
-        const denoConfig = JSON.parse(Deno.readTextFileSync(path))
-        return denoConfig.version || '1.0.0'
-      } catch {
-        continue
-      }
-    }
-    
-    // If no deno.json found, return fallback
-    return '1.0.0'
-  } catch {
-    // Fallback version if deno.json can't be read
-    return '1.0.0'
-  }
+  return VERSION
 }
 
 /**

@@ -81,6 +81,11 @@ jobs:
         with:
           deno-version: v2.4.3
 
+      - name: Generate version file
+        run: |
+          echo "🔧 Generating version.ts..."
+          deno run --allow-read --allow-write scripts/generate-version.ts
+
       - name: Build binary
         run: |
           VERSION=${{ needs.detect-version.outputs.version }}

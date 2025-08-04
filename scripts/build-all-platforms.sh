@@ -6,6 +6,10 @@ set -e
 
 echo "🚀 Building dotvibe for all platforms..."
 
+# Generate version.ts before building
+echo "🔧 Generating version.ts..."
+deno run --allow-read --allow-write scripts/generate-version.ts
+
 # Get version from deno.json
 VERSION=$(cat deno.json | jq -r '.version')
 echo "📦 Version: v${VERSION}"
