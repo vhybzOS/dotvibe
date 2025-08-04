@@ -81,11 +81,11 @@ func buildSurrealDBDownloadURL(goos, goarch, version string) string {
 		archName = goarch
 	}
 
-	// Map OS names and build filename (SurrealDB releases are in .tgz format)
+	// Map OS names and build filename (SurrealDB: Windows uses .exe, others use .tgz)
 	var filename string
 	switch goos {
 	case "windows":
-		filename = fmt.Sprintf("surreal-%s.windows-%s.tgz", version, archName)
+		filename = fmt.Sprintf("surreal-%s.windows-%s.exe", version, archName)
 	case "darwin":
 		filename = fmt.Sprintf("surreal-%s.darwin-%s.tgz", version, archName)
 	case "linux":
@@ -269,7 +269,7 @@ func downloadBinary(url, destPath string) error {
 func installBinary(binary BinaryInfo) error {
 	fmt.Printf("📦 Installing %s %s...\n", binary.Name, binary.Version)
 
-	// Determine if this is a .tgz file (SurrealDB case)
+	// Determine if this is a .tgz file (SurrealDB on Linux/macOS, others vary)
 	isTgz := filepath.Ext(binary.URL) == ".tgz"
 	
 	// Download to temporary file
