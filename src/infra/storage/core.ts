@@ -26,6 +26,8 @@ import type {
   FindElementsOptions,
   GraphTraversalOptions,
   SearchOptions,
+  DirectoryIndexOptions,
+  DirectoryIndexResult,
 } from "./types.ts";
 import {
   findProjectRoot,
@@ -556,6 +558,159 @@ export const indexFile = (
           processingTime,
           errors: errorCollector.getAll(),
         };
+      })
+    )
+  );
+};
+
+/**
+ * Index all supported files in a directory recursively
+ */
+export const indexDirectory = (
+  dirPath: string,
+  projectPath: string,
+  options: DirectoryIndexOptions = {}
+): Effect.Effect<DirectoryIndexResult, VibeError> => {
+  const startTime = Date.now();
+  const { maxDepth = 10, verbose = false, batchSize = 5 } = options;
+
+  return pipe(
+    // Validate directory exists
+    Effect.tryPromise({
+      try: async () => {
+        const absolutePath = resolveProjectPath(dirPath, projectPath);
+        const stats = await Deno.stat(absolutePath);
+        if (!stats.isDirectory) {
+          throw new Error(`Path is not a directory: ${dirPath}`);
+        }
+        return absolutePath;
+      },
+      catch: (error) =>
+        storageError("error", `Invalid directory: ${dirPath}`, dirPath, { error })
+    }),
+
+    // Scan for files using file-scanner
+    Effect.flatMap((absoluteDirPath) =>
+      Effect.tryPromise({
+        try: async () => {
+          const { scanFiles } = await import("../../file-scanner.ts");
+          const scanOptions = {
+            extensions: ['.ts', '.tsx', '.js', '.jsx'],
+            maxDepth,
+            ignorePatterns: []
+          };
+          
+          if (verbose) {
+            console.log(`🔍 Scanning directory: ${absoluteDirPath}`);
+          }
+          
+          const scannedFiles = await Effect.runPromise(scanFiles(absoluteDirPath, scanOptions));
+          const filePaths = scannedFiles
+            .filter(file => file.content !== null && !file.isBinary)
+            .map(file => file.path);
+
+          if (verbose) {
+            console.log(`📁 Found ${filePaths.length} files to index`);
+          }
+
+          return { absoluteDirPath, filePaths };
+        },
+        catch: (error) =>
+          storageError("error", `Failed to scan directory: ${dirPath}`, dirPath, { error })
+      })
+    ),
+
+    // Process files in batches
+    Effect.flatMap(({ absoluteDirPath, filePaths }) =>
+      Effect.tryPromise({
+        try: async () => {
+          const fileResults: IndexResult[] = [];
+          const errors: string[] = [];
+          let totalElements = 0;
+          let totalRelationships = 0;
+          let totalDataFlows = 0;
+
+          // Process files in batches
+          for (let i = 0; i < filePaths.length; i += batchSize) {
+            const batch = filePaths.slice(i, i + batchSize);
+            const batchNumber = Math.floor(i / batchSize) + 1;
+            const totalBatches = Math.ceil(filePaths.length / batchSize);
+
+            if (verbose) {
+              console.log(`🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} files):`);
+            }
+
+            // Process batch in parallel
+            const batchPromises = batch.map(async (filePath) => {
+              try {
+                const relativeFilePath = filePath.replace(projectPath + '/', '');
+                const result = await Effect.runPromise(indexFile(relativeFilePath, projectPath));
+                
+                if (verbose) {
+                  const status = result.errors.length > 0 ? '⚠️' : '✅';
+                  console.log(`  ${status} ${relativeFilePath} - ${result.elementsAdded + result.elementsUpdated} elements, ${result.relationshipsAdded} relationships (${result.processingTime}ms)`);
+                }
+                
+                return { success: true, result, filePath };
+              } catch (error) {
+                const errorMessage = `${filePath} - ${error instanceof Error ? error.message : 'Unknown error'}`;
+                if (verbose) {
+                  console.log(`  ❌ ${errorMessage}`);
+                }
+                return { success: false, error: errorMessage, filePath };
+              }
+            });
+
+            const batchResults = await Promise.allSettled(batchPromises);
+
+            // Collect results
+            batchResults.forEach((promiseResult) => {
+              if (promiseResult.status === 'fulfilled') {
+                const { success, result, error, filePath } = promiseResult.value;
+                if (success && result) {
+                  fileResults.push(result);
+                  totalElements += result.elementsAdded + result.elementsUpdated;
+                  totalRelationships += result.relationshipsAdded;
+                  totalDataFlows += result.dataFlowsAdded;
+                } else {
+                  errors.push(error || `Failed to process ${filePath}`);
+                }
+              } else {
+                errors.push(`Promise rejected: ${promiseResult.reason}`);
+              }
+            });
+          }
+
+          const processingTime = Date.now() - startTime;
+          const filesProcessed = fileResults.length;
+          const filesSkipped = filePaths.length - filesProcessed;
+
+          if (verbose || !verbose) {
+            console.log(`\n📊 Final Results:`);
+            console.log(`  Directory: ${absoluteDirPath}`);
+            console.log(`  Files Processed: ${filesProcessed}/${filePaths.length}`);
+            console.log(`  Total Elements: ${totalElements}`);
+            console.log(`  Total Relationships: ${totalRelationships}`);
+            console.log(`  Processing Time: ${(processingTime / 1000).toFixed(1)}s`);
+            if (errors.length > 0) {
+              console.log(`  Errors: ${errors.length} files failed`);
+            }
+          }
+
+          return {
+            dirPath,
+            filesProcessed,
+            filesSkipped,
+            totalElements,
+            totalRelationships,
+            totalDataFlows,
+            processingTime,
+            errors,
+            fileResults
+          };
+        },
+        catch: (error) =>
+          storageError("error", `Failed to process directory: ${dirPath}`, dirPath, { error })
       })
     )
   );

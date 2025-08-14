@@ -156,3 +156,27 @@ export interface SearchOptions {
   limit?: number;
   threshold?: number;
 }
+
+/**
+ * Options for directory indexing operations
+ */
+export interface DirectoryIndexOptions {
+  maxDepth?: number;
+  verbose?: boolean;
+  batchSize?: number;
+}
+
+/**
+ * Result of directory indexing operation
+ */
+export interface DirectoryIndexResult {
+  dirPath: string;
+  filesProcessed: number;
+  filesSkipped: number;
+  totalElements: number;
+  totalRelationships: number;
+  totalDataFlows: number;
+  processingTime: number;
+  errors: string[];
+  fileResults: IndexResult[];
+}

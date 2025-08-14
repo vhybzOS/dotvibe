@@ -449,6 +449,82 @@ const handleStorageIndexFileCommand = async (
 }
 
 /**
+ * Handle storage index-dir command - recursively index directory
+ */
+const handleStorageIndexDirCommand = async (
+  dirPath: string,
+  options: { verbose?: boolean; maxDepth?: number; batchSize?: number }
+) => {
+  if (!dirPath || dirPath.trim().length === 0) {
+    console.error('❌ Directory path cannot be empty')
+    console.error('💡 Example: vibe storage index-dir src/')
+    Deno.exit(1)
+  }
+
+  try {
+    const projectPath = findProjectRoot()
+    if (!projectPath) {
+      console.error('❌ Could not determine project path')
+      console.error('💡 Make sure you are in a git repository or have a package.json')
+      Deno.exit(1)
+    }
+
+    // Validate directory exists
+    const absolutePath = dirPath.startsWith('/') ? dirPath : `${Deno.cwd()}/${dirPath}`
+    
+    try {
+      const stats = await Deno.stat(absolutePath)
+      if (!stats.isDirectory) {
+        console.error('❌ Path is not a directory:', absolutePath)
+        Deno.exit(1)
+      }
+    } catch (error) {
+      console.error('❌ Directory does not exist:', absolutePath)
+      Deno.exit(1)
+    }
+
+    const storage = new Storage(projectPath)
+    
+    if (options.verbose) {
+      console.log(`🔍 Indexing directory: ${absolutePath}`)
+      console.log(`📁 Project path: ${projectPath}`)
+      if (options.maxDepth) console.log(`📏 Max depth: ${options.maxDepth}`)
+      if (options.batchSize) console.log(`📦 Batch size: ${options.batchSize}`)
+    }
+
+    const result = await storage.indexDirectory(absolutePath, {
+      verbose: options.verbose,
+      maxDepth: options.maxDepth,
+      batchSize: options.batchSize
+    })
+    
+    console.log('✅ Directory indexed successfully')
+    console.log(`   📁 Directory: ${result.dirPath}`)
+    console.log(`   📋 Files Processed: ${result.filesProcessed}/${result.filesProcessed + result.filesSkipped}`)
+    console.log(`   🧬 Total Elements: ${result.totalElements}`)
+    console.log(`   🔗 Total Relationships: ${result.totalRelationships}`)
+    console.log(`   ⏱️  Processing Time: ${(result.processingTime / 1000).toFixed(1)}s`)
+
+    if (result.filesSkipped > 0) {
+      console.log(`   ⏭️  Files Skipped: ${result.filesSkipped}`)
+    }
+
+    if (result.errors && result.errors.length > 0) {
+      console.log(`   ⚠️  Errors: ${result.errors.length}`)
+      result.errors.slice(0, 5).forEach((error) => console.log(`     - ${error}`))
+      if (result.errors.length > 5) {
+        console.log(`     ... and ${result.errors.length - 5} more errors`)
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Directory indexing failed:')
+    console.error(`   ${error instanceof Error ? error.message : String(error)}`)
+    Deno.exit(1)
+  }
+}
+
+/**
  * Format error messages for user display
  */
 const formatError = (error: VibeError): string => {
@@ -587,6 +663,15 @@ const setupCLI = () => {
     .option('-v, --verbose', 'Show detailed indexing progress', false)
     .action(handleStorageIndexFileCommand)
 
+  storageCommand
+    .command('index-dir')
+    .description('Recursively index all files in directory to database')  
+    .argument('<dir>', 'Directory path to index')
+    .option('-v, --verbose', 'Show detailed progress for each file', false)
+    .option('--max-depth <number>', 'Maximum directory depth', (value) => parseInt(value), 10)
+    .option('--batch-size <number>', 'Files to process in parallel', (value) => parseInt(value), 5)
+    .action(handleStorageIndexDirCommand)
+
   // Help command
   program
     .command('help')
@@ -615,7 +700,8 @@ const setupCLI = () => {
       console.log('  vibe ast relationships <file>  Discover relationships')
       console.log('  vibe ast dataflow <file>  Analyze data flow\n')
       console.log('🗄️  Database Operations:')
-      console.log('  vibe storage index-file <file>  Index specific file\n')
+      console.log('  vibe storage index-file <file>  Index specific file')
+      console.log('  vibe storage index-dir <dir>    Recursively index directory\n')
       console.log('🔍 Index Options:')
       console.log('  --ext .ts,.js             Index specific extensions')
       console.log('  --include-markdown        Include .md files')
@@ -633,6 +719,7 @@ const setupCLI = () => {
       console.log('  vibe query "async functions"     # Search code')
       console.log('  vibe ast parse src/file.ts       # Analyze file (read-only)')
       console.log('  vibe storage index-file src/main.ts  # Index file to DB')
+      console.log('  vibe storage index-dir src/      # Index directory to DB')
       console.log('  vibe stop                        # Stop server')
     })
   

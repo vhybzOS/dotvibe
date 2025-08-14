@@ -10,6 +10,7 @@ import {
   FindElementsOptions,
   GraphTraversalOptions,
   SearchOptions,
+  DirectoryIndexOptions,
 } from "./types.ts";
 
 // =============================================================================
@@ -29,6 +30,8 @@ export type {
   FindElementsOptions,
   GraphTraversalOptions,
   SearchOptions,
+  DirectoryIndexOptions,
+  DirectoryIndexResult,
 } from "./types.ts";
 
 // =============================================================================
@@ -43,6 +46,7 @@ export {
 
   // File indexing
   indexFile,
+  indexDirectory,
 
   // Graph traversal
   findElementCallers,
@@ -151,6 +155,13 @@ export class Storage {
     const { Effect } = await import("effect");
     const { searchElements } = await import("./core.ts");
     return Effect.runPromise(searchElements(query, this.projectPath, options));
+  }
+
+  // Directory operations
+  async indexDirectory(dirPath: string, options?: DirectoryIndexOptions) {
+    const { Effect } = await import("effect");
+    const { indexDirectory } = await import("./core.ts");
+    return Effect.runPromise(indexDirectory(dirPath, this.projectPath, options));
   }
 }
 
