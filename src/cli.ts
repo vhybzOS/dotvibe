@@ -17,6 +17,8 @@ import { indexCommand, IndexOptionsSchema } from './commands/index.ts'
 import { setupProcessCleanup } from './process-manager.ts'
 import { stopSurrealServer, isServerRunning, getServerInfo } from './surreal-server.ts'
 import { getWorkspaceStatus } from './workspace.ts'
+import { AST, detectLanguage } from './infra/ast/index.ts'
+import { Storage, findProjectRoot } from './infra/storage/index.ts'
 
 
 /**
@@ -269,6 +271,184 @@ const handleStatusCommand = async () => {
 }
 
 /**
+ * Handle AST command group - file analysis without database effects
+ */
+const handleAstCommand = async (
+  subCommand: string,
+  filePath: string,
+  options: { verbose?: boolean }
+) => {
+  if (!subCommand || !filePath) {
+    console.error('❌ AST command requires subcommand and file path')
+    console.error('💡 Example: vibe ast parse src/file.ts')
+    console.error('💡 Available subcommands: parse, relationships, dataflow, elements')
+    Deno.exit(1)
+  }
+
+  if (!filePath.trim()) {
+    console.error('❌ File path cannot be empty')
+    Deno.exit(1)
+  }
+
+  try {
+    const ast = new AST()
+    const content = await Deno.readTextFile(filePath)
+    const language = detectLanguage(filePath)
+    const absolutePath = filePath.startsWith('/') ? filePath : `${Deno.cwd()}/${filePath}`
+    const verbose = options.verbose || false
+
+    switch (subCommand) {
+      case 'parse': {
+        console.log('🔍 Parsing file with relationships and data flow analysis...')
+        const result = await ast.parseFileWithRelationships(content, language, absolutePath)
+        
+        console.log('📊 Parse Result:')
+        console.log(`   File: ${result.filePath}`)
+        console.log(`   Elements: ${result.elements.length}`)
+        console.log(`   Relationships: ${result.relationships.length}`)
+        console.log(`   Data Flows: ${result.dataFlows.length}`)
+        console.log(`   Processing Time: ${result.processingTime}ms`)
+        
+        if (result.errors.length > 0) {
+          console.log(`   Errors: ${result.errors.length}`)
+          result.errors.forEach((error) => console.log(`     - ${error}`))
+        }
+        
+        if (verbose) {
+          console.log('\n📋 Elements:')
+          result.elements.forEach((element, index) => {
+            console.log(`   ${index + 1}. ${element.element_name} (${element.element_type}) ${element.start_line}:${element.end_line}`)
+          })
+          
+          if (result.relationships.length > 0) {
+            console.log('\n🔗 Relationships:')
+            result.relationships.forEach((rel, index) => {
+              console.log(`   ${index + 1}. ${rel.from} --${rel.relationship_type}--> ${rel.to}`)
+            })
+          }
+          
+          if (result.dataFlows.length > 0) {
+            console.log('\n🌊 Data Flows:')
+            result.dataFlows.forEach((flow, index) => {
+              console.log(`   ${index + 1}. ${flow.from} ~~${flow.flow_type}~~> ${flow.to}`)
+            })
+          }
+        }
+        break
+      }
+      
+      case 'relationships': {
+        console.log('🔍 Discovering relationships...')
+        const parseResult = await ast.parseToResult(content, language, absolutePath)
+        const relationships = await ast.discoverRelationships(parseResult)
+        
+        console.log(`🔗 Found ${relationships.length} relationships:`)
+        relationships.forEach((rel, index) => {
+          console.log(`   ${index + 1}. ${rel.from} --${rel.relationship_type}--> ${rel.to}`)
+          if (verbose && rel.context) {
+            console.log(`      Context: ${JSON.stringify(rel.context, null, 2)}`)
+          }
+        })
+        break
+      }
+      
+      case 'dataflow': {
+        console.log('🔍 Analyzing data flow...')
+        const parseResult = await ast.parseToResult(content, language, absolutePath)
+        const dataFlows = await ast.analyzeDataFlow(parseResult)
+        
+        console.log(`🌊 Found ${dataFlows.length} data flows:`)
+        dataFlows.forEach((flow, index) => {
+          console.log(`   ${index + 1}. ${flow.from} ~~${flow.flow_type}~~> ${flow.to}`)
+          if (verbose && flow.flow_metadata) {
+            console.log(`      Metadata: ${JSON.stringify(flow.flow_metadata, null, 2)}`)
+          }
+        })
+        break
+      }
+      
+      case 'elements': {
+        console.log('🔍 Extracting elements...')
+        const parseResult = await ast.parseToResult(content, language, absolutePath)
+        
+        console.log(`📋 Found ${parseResult.elements.length} elements:`)
+        parseResult.elements.forEach((element, index) => {
+          console.log(`   ${index + 1}. ${element.element_name} (${element.element_type}) ${element.start_line}:${element.end_line}`)
+          if (verbose) {
+            console.log(`      ID: ${element.id}`)
+            console.log(`      File: ${element.file_path}`)
+            if (element.search_phrases && element.search_phrases.length > 0) {
+              console.log(`      Search phrases: ${element.search_phrases.join(', ')}`)
+            }
+            if (element.parameters && element.parameters.length > 0) {
+              console.log(`      Parameters: ${element.parameters.join(', ')}`)
+            }
+          }
+        })
+        break
+      }
+      
+      default: {
+        console.error(`❌ Unknown AST subcommand: ${subCommand}`)
+        console.error('💡 Available subcommands: parse, relationships, dataflow, elements')
+        Deno.exit(1)
+      }
+    }
+  } catch (error) {
+    console.error('❌ AST command failed:')
+    console.error(`   ${error instanceof Error ? error.message : String(error)}`)
+    Deno.exit(1)
+  }
+}
+
+/**
+ * Handle storage index-file command - index specific file to database
+ */
+const handleStorageIndexFileCommand = async (
+  filePath: string,
+  options: { verbose?: boolean }
+) => {
+  if (!filePath || filePath.trim().length === 0) {
+    console.error('❌ File path cannot be empty')
+    console.error('💡 Example: vibe storage index-file src/file.ts')
+    Deno.exit(1)
+  }
+
+  try {
+    const projectPath = findProjectRoot()
+    if (!projectPath) {
+      console.error('❌ Could not determine project path')
+      console.error('💡 Make sure you are in a git repository or have a package.json')
+      Deno.exit(1)
+    }
+
+    const storage = new Storage(projectPath)
+    const absolutePath = filePath.startsWith('/') ? filePath : `${Deno.cwd()}/${filePath}`
+    
+    if (options.verbose) {
+      console.log(`🔍 Indexing file: ${absolutePath}`)
+      console.log(`📁 Project path: ${projectPath}`)
+    }
+
+    const result = await storage.indexFile(absolutePath)
+    
+    console.log('✅ File indexed successfully')
+    console.log(`   📋 Elements: ${result.elementsIndexed}`)
+    console.log(`   🔗 Relationships: ${result.relationshipsIndexed}`)
+    console.log(`   ⏱️  Processing time: ${result.processingTime}ms`)
+    
+    if (result.errors && result.errors.length > 0) {
+      console.log(`   ⚠️  Errors: ${result.errors.length}`)
+      result.errors.forEach((error) => console.log(`     - ${error}`))
+    }
+  } catch (error) {
+    console.error('❌ Storage index command failed:')
+    console.error(`   ${error instanceof Error ? error.message : String(error)}`)
+    Deno.exit(1)
+  }
+}
+
+/**
  * Format error messages for user display
  */
 const formatError = (error: VibeError): string => {
@@ -354,6 +534,59 @@ const setupCLI = () => {
     .description('Show workspace and services status')
     .action(handleStatusCommand)
   
+  // AST command group
+  const astCommand = program
+    .command('ast')
+    .description('Analyze code files (read-only, no database effects)')
+  
+  astCommand
+    .command('parse')
+    .description('Parse file with complete analysis (elements + relationships + dataflow)')
+    .argument('<file>', 'File path to analyze')
+    .option('-v, --verbose', 'Show detailed output with all elements and relationships', false)
+    .action((filePath: string, options: { verbose?: boolean }) => {
+      handleAstCommand('parse', filePath, options)
+    })
+  
+  astCommand
+    .command('relationships')
+    .description('Discover relationships only')
+    .argument('<file>', 'File path to analyze')
+    .option('-v, --verbose', 'Show detailed output with relationship context', false)
+    .action((filePath: string, options: { verbose?: boolean }) => {
+      handleAstCommand('relationships', filePath, options)
+    })
+  
+  astCommand
+    .command('dataflow')
+    .description('Analyze data flow only')
+    .argument('<file>', 'File path to analyze')
+    .option('-v, --verbose', 'Show detailed output with flow metadata', false)
+    .action((filePath: string, options: { verbose?: boolean }) => {
+      handleAstCommand('dataflow', filePath, options)
+    })
+  
+  astCommand
+    .command('elements')
+    .description('Extract code elements only')
+    .argument('<file>', 'File path to analyze')
+    .option('-v, --verbose', 'Show detailed output with element properties', false)
+    .action((filePath: string, options: { verbose?: boolean }) => {
+      handleAstCommand('elements', filePath, options)
+    })
+
+  // Storage command group
+  const storageCommand = program
+    .command('storage')
+    .description('Database storage operations')
+  
+  storageCommand
+    .command('index-file')
+    .description('Index specific file to database')
+    .argument('<file>', 'File path to index')
+    .option('-v, --verbose', 'Show detailed indexing progress', false)
+    .action(handleStorageIndexFileCommand)
+
   // Help command
   program
     .command('help')
@@ -376,6 +609,13 @@ const setupCLI = () => {
       console.log('  vibe status               Show workspace status')
       console.log('  vibe stop                 Stop SurrealDB server')
       console.log('  vibe help                 Show this help message\n')
+      console.log('🧬 AST Analysis (Read-Only):')
+      console.log('  vibe ast parse <file>     Complete file analysis')
+      console.log('  vibe ast elements <file>  Extract code elements')
+      console.log('  vibe ast relationships <file>  Discover relationships')
+      console.log('  vibe ast dataflow <file>  Analyze data flow\n')
+      console.log('🗄️  Database Operations:')
+      console.log('  vibe storage index-file <file>  Index specific file\n')
       console.log('🔍 Index Options:')
       console.log('  --ext .ts,.js             Index specific extensions')
       console.log('  --include-markdown        Include .md files')
@@ -391,6 +631,8 @@ const setupCLI = () => {
       console.log('  vibe start                       # Start server')
       console.log('  vibe index src/ --ext .ts,.tsx   # Index specific files')
       console.log('  vibe query "async functions"     # Search code')
+      console.log('  vibe ast parse src/file.ts       # Analyze file (read-only)')
+      console.log('  vibe storage index-file src/main.ts  # Index file to DB')
       console.log('  vibe stop                        # Stop server')
     })
   
