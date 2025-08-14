@@ -14,7 +14,7 @@ import {
   type VibeError,
 } from "../errors.ts";
 import { getCommandVerbose } from "../config.ts";
-import { parseFileWithRelationships, type FileParseResult } from "../ast.ts";
+import { parseFileWithRelationships, type FileParseResult } from "../ast/index.ts";
 import type {
   DatabaseConnection,
   CodeElementData,

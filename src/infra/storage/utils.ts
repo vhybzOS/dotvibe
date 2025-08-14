@@ -109,7 +109,7 @@ export const classifyTarget = (
  * Process raw AST relationship data into enhanced relationship with resolution tracking
  */
 export const processRelationship = (
-  rawRelationship: import("../ast.ts").RelationshipData,
+  rawRelationship: import("../ast/index.ts").RelationshipData,
   projectPath: string
 ): RelationshipData => {
   const targetType = classifyTarget(rawRelationship.to, projectPath);
