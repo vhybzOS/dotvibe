@@ -90,14 +90,25 @@ export const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
 // =============================================================================
 
 /**
+ * Detect if running in compiled mode
+ * Extracted for testability
+ */
+export const isCompiledMode = (): boolean => {
+  return !import.meta.url.startsWith('file:///')
+}
+
+/**
  * Resolve WASM path for a language dynamically
  * Detects compiled executable vs development mode
  */
-export const resolveWasmPath = async (language: string): Promise<string> => {
+export const resolveWasmPath = async (language: string, compiledMode?: boolean): Promise<string> => {
   const config = LANGUAGE_CONFIGS[language]
   if (!config) {
     throw new Error(`Unsupported language: ${language}`)
   }
+  
+  // Use provided mode or detect automatically
+  const isCompiled = compiledMode ?? isCompiledMode()
   
   // Helper function to find latest version in a directory
   const findLatestVersion = async (basePath: string): Promise<string | null> => {
@@ -140,9 +151,6 @@ export const resolveWasmPath = async (language: string): Promise<string> => {
     }
   }
   
-  // Check if running from compiled executable
-  const isCompiled = !import.meta.url.startsWith('file:///')
-  
   // Universal search paths (used in both modes)
   const possiblePaths: string[] = []
   
@@ -162,19 +170,23 @@ export const resolveWasmPath = async (language: string): Promise<string> => {
     // Continue if we can't determine executable directory
   }
   
-  // 4. User space installation - find latest version
-  const homeDir = Deno.env.get('HOME')
-  if (homeDir) {
-    const userLatestPath = await findLatestVersion(`${homeDir}/.local/dotvibe`)
-    if (userLatestPath) {
-      possiblePaths.push(userLatestPath)
+  // 4. User space installation - find latest version (skip in compiled mode)
+  if (!isCompiled) {
+    const homeDir = Deno.env.get('HOME')
+    if (homeDir) {
+      const userLatestPath = await findLatestVersion(`${homeDir}/.local/dotvibe`)
+      if (userLatestPath) {
+        possiblePaths.push(userLatestPath)
+      }
     }
   }
   
-  // 5. System space installation - find latest version
-  const systemLatestPath = await findLatestVersion('/usr/local/dotvibe')
-  if (systemLatestPath) {
-    possiblePaths.push(systemLatestPath)
+  // 5. System space installation - find latest version (skip in compiled mode)
+  if (!isCompiled) {
+    const systemLatestPath = await findLatestVersion('/usr/local/dotvibe')
+    if (systemLatestPath) {
+      possiblePaths.push(systemLatestPath)
+    }
   }
   
   // Try all possible paths first (works for both compiled and development)
